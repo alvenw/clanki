@@ -86,12 +86,35 @@ def _cmd_review(args: argparse.Namespace) -> int:
     deck_name = args.deck
     use_plain = args.plain
 
-    # For now, always use plain mode since TUI is not yet implemented
+    # Use TUI if available and not explicitly disabled
     if not use_plain and _check_tui_available():
-        # TUI module doesn't exist yet, fall back to plain
-        print("TUI not yet implemented, using plain mode.")
-        use_plain = True
+        try:
+            from .tui import run_tui
 
+            anki_base = resolve_anki_base()
+            profile = default_profile(anki_base)
+
+            if profile is None:
+                print("Error: No Anki profiles found.", file=sys.stderr)
+                return 1
+
+            collection_path = resolve_collection_path(anki_base, profile)
+            run_tui(collection_path=collection_path, initial_deck=deck_name)
+            return 0
+        except CollectionLockError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        except CollectionNotFoundError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(f"Unexpected error: {exc}", file=sys.stderr)
+            return 1
+
+    # Plain mode fallback
     try:
         anki_base = resolve_anki_base()
         profile = default_profile(anki_base)
@@ -232,11 +255,35 @@ def _cmd_default(args: argparse.Namespace) -> int:
     """Handle default command (TUI or plain mode)."""
     use_plain = args.plain
 
+    # Use TUI if available and not explicitly disabled
     if not use_plain and _check_tui_available():
-        # TUI module doesn't exist yet
-        print("TUI not yet implemented, using plain mode.")
-        use_plain = True
+        try:
+            from .tui import run_tui
 
+            anki_base = resolve_anki_base()
+            profile = default_profile(anki_base)
+
+            if profile is None:
+                print("Error: No Anki profiles found.", file=sys.stderr)
+                return 1
+
+            collection_path = resolve_collection_path(anki_base, profile)
+            run_tui(collection_path=collection_path)
+            return 0
+        except CollectionLockError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        except CollectionNotFoundError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(f"Unexpected error: {exc}", file=sys.stderr)
+            return 1
+
+    # Plain mode fallback
     if use_plain or not _check_tui_available():
         # Plain mode: show deck list
         try:
@@ -293,9 +340,8 @@ def _cmd_default(args: argparse.Namespace) -> int:
             print(f"Unexpected error: {exc}", file=sys.stderr)
             return 1
 
-    # TUI mode - not implemented yet
-    print("TUI mode not yet implemented.")
-    return 1
+    # This should not be reached since TUI is handled above
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
