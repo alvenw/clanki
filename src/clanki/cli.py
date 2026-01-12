@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from html import unescape
-from html.parser import HTMLParser
 from pathlib import Path
 
 from . import __version__
@@ -23,6 +21,7 @@ from .collection import (
     open_collection,
 )
 from .config import default_profile, resolve_anki_base, resolve_collection_path
+from .render import render_html_to_text
 from .sync import SyncResult, run_sync
 
 
@@ -34,54 +33,6 @@ def _check_tui_available() -> bool:
         return True
     except ImportError:
         return False
-
-
-class _HTMLStripper(HTMLParser):
-    """Strip HTML tags and extract text content."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._chunks: list[str] = []
-        self._skip_depth = 0
-        self._skip_tags = {"style", "script"}
-
-    def handle_data(self, data: str) -> None:
-        if self._skip_depth > 0:
-            return
-        if data:
-            self._chunks.append(data)
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in self._skip_tags:
-            self._skip_depth += 1
-            return
-        if tag in {"br", "div", "p", "li", "tr"}:
-            self._chunks.append("\n")
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in self._skip_tags and self._skip_depth > 0:
-            self._skip_depth -= 1
-            return
-        if tag in {"p", "div", "li", "tr"}:
-            self._chunks.append("\n")
-
-    def get_text(self) -> str:
-        return "".join(self._chunks)
-
-
-def _html_to_text(html: str) -> str:
-    """Convert HTML to plain text."""
-    stripper = _HTMLStripper()
-    stripper.feed(html or "")
-    text = unescape(stripper.get_text())
-    lines = [line.strip() for line in text.splitlines()]
-    cleaned = []
-    for line in lines:
-        if line:
-            cleaned.append(line)
-        elif cleaned and cleaned[-1] != "":
-            cleaned.append("")
-    return "\n".join(cleaned).strip()
 
 
 def _cmd_sync(args: argparse.Namespace) -> int:
@@ -170,6 +121,9 @@ def _cmd_review(args: argparse.Namespace) -> int:
                 print("No cards due for review.")
                 return 0
 
+            # Get media directory for rendering
+            media_dir = col.media.dir()
+
             # Plain review loop
             reviewed = 0
             while True:
@@ -178,7 +132,7 @@ def _cmd_review(args: argparse.Namespace) -> int:
                     break
 
                 # Show question
-                question = _html_to_text(card.question_html)
+                question = render_html_to_text(card.question_html, media_dir=media_dir)
                 print("-" * 40)
                 print(f"Card {reviewed + 1}")
                 print("-" * 40)
@@ -192,7 +146,7 @@ def _cmd_review(args: argparse.Namespace) -> int:
                     break
 
                 # Show answer
-                answer = _html_to_text(card.answer_html)
+                answer = render_html_to_text(card.answer_html, media_dir=media_dir)
                 print(f"\nAnswer:\n{answer}\n")
 
                 # Get rating
@@ -215,8 +169,8 @@ def _cmd_review(args: argparse.Namespace) -> int:
                             card = session.undo()
                             print("Undone. Showing previous card.")
                             # Re-display the card
-                            question = _html_to_text(card.question_html)
-                            answer = _html_to_text(card.answer_html)
+                            question = render_html_to_text(card.question_html, media_dir=media_dir)
+                            answer = render_html_to_text(card.answer_html, media_dir=media_dir)
                             print(f"\nQuestion:\n{question}\n")
                             print(f"Answer:\n{answer}\n")
                             print(
