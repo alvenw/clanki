@@ -33,6 +33,11 @@ class _HTMLToTextRenderer(HTMLParser):
         self._list_depth = 0
         self._in_list_item = False
         self._media_dir = Path(media_dir) if media_dir else None
+        # Ruby/furigana state tracking
+        self._in_ruby = False
+        self._ruby_base = ""
+        self._in_rt = False
+        self._rt_text = ""
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in self.SKIP_TAGS:
@@ -52,6 +57,17 @@ class _HTMLToTextRenderer(HTMLParser):
             # Add newline, indentation, and bullet
             indent = "  " * (self._list_depth - 1) if self._list_depth > 0 else ""
             self._chunks.append(f"\n{indent}- ")
+            return
+
+        # Ruby/furigana handling
+        if tag == "ruby":
+            self._in_ruby = True
+            self._ruby_base = ""
+            self._rt_text = ""
+            return
+
+        if tag == "rt":
+            self._in_rt = True
             return
 
         # Image handling
@@ -76,6 +92,22 @@ class _HTMLToTextRenderer(HTMLParser):
         if self._skip_depth > 0:
             return
 
+        # Ruby/furigana end handling
+        if tag == "rt":
+            self._in_rt = False
+            return
+
+        if tag == "ruby":
+            # Output combined format: base(reading)
+            if self._ruby_base and self._rt_text:
+                self._chunks.append(f"{self._ruby_base}({self._rt_text})")
+            elif self._ruby_base:
+                self._chunks.append(self._ruby_base)
+            self._in_ruby = False
+            self._ruby_base = ""
+            self._rt_text = ""
+            return
+
         # List handling
         if tag in {"ul", "ol"}:
             if self._list_depth > 0:
@@ -94,8 +126,19 @@ class _HTMLToTextRenderer(HTMLParser):
     def handle_data(self, data: str) -> None:
         if self._skip_depth > 0:
             return
-        if data:
-            self._chunks.append(data)
+        if not data:
+            return
+
+        # Handle ruby/furigana text accumulation
+        if self._in_rt:
+            self._rt_text += data
+            return
+
+        if self._in_ruby:
+            self._ruby_base += data
+            return
+
+        self._chunks.append(data)
 
     def _extract_filename(self, src: str) -> str:
         """Extract filename from a src attribute."""
