@@ -14,6 +14,11 @@ from pathlib import Path
 def resolve_anki_base(override: str | Path | None = None) -> Path:
     """Resolve the Anki base directory for the current platform.
 
+    Resolution priority:
+    1. Explicit override parameter if provided
+    2. ANKI_BASE environment variable if set
+    3. Platform-specific default path
+
     Args:
         override: Optional explicit path to use instead of platform default.
 
@@ -27,6 +32,14 @@ def resolve_anki_base(override: str | Path | None = None) -> Path:
         base = Path(override).expanduser()
         if not base.exists():
             raise ValueError(f"Anki base directory does not exist: {base}")
+        return base
+
+    # Check ANKI_BASE environment variable
+    env_base = os.environ.get("ANKI_BASE")
+    if env_base:
+        base = Path(env_base).expanduser()
+        if not base.exists():
+            raise ValueError(f"ANKI_BASE directory does not exist: {base}")
         return base
 
     if sys.platform == "darwin":

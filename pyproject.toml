@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "clanki"
+dynamic = ["version"]
+description = "Terminal-based Anki review client using native Anki backend"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Alven Wang" },
+]
+keywords = ["anki", "flashcards", "spaced-repetition", "terminal", "tui"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Education",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Education",
+]
+dependencies = [
+    "anki==25.9.2",
+    "textual>=0.50",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "mypy",
+]
+
+[project.urls]
+Homepage = "https://github.com/aaalvn/clanki"
+Repository = "https://github.com/aaalvn/clanki"
+Issues = "https://github.com/aaalvn/clanki/issues"
+
+[project.scripts]
+clanki = "clanki.cli:main"
+
+[tool.hatch.version]
+path = "src/clanki/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/clanki"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
