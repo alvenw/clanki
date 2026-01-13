@@ -16,8 +16,10 @@ from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Static
 
+from ...config_store import Config, save_config
 from ...render import render_html_to_text
 from ...review import CardView, DeckNotFoundError, Rating, ReviewSession, UndoError
+from ..render import is_image_support_available
 from ..widgets.card_view import CardViewWidget
 from ..widgets.stats_bar import StatsBar
 
@@ -38,6 +40,7 @@ class ReviewScreen(Screen[None]):
         Binding("3", "rate_good", "Good", show=False),
         Binding("4", "rate_easy", "Easy", show=False),
         Binding("u", "undo", "Undo", show=False),
+        Binding("i", "toggle_images", "Images", show=False),
     ]
 
     def __init__(self, deck_name: str) -> None:
@@ -46,9 +49,10 @@ class ReviewScreen(Screen[None]):
         self._session: ReviewSession | None = None
         self._current_card: CardView | None = None
         self._answer_revealed = False
+        self._processing_action = False  # Guard against rapid key presses
 
     @property
-    def clanki_app(self) -> "ClankiApp":
+    def clanki_app(self) -> ClankiApp:
         """Get the typed app instance."""
         from ..app import ClankiApp
 
@@ -56,11 +60,19 @@ class ReviewScreen(Screen[None]):
         return self.app
 
     def compose(self) -> ComposeResult:
+        # Get initial settings from app state
+        media_dir = self.clanki_app.state.media_dir
+        images_enabled = self.clanki_app.state.images_enabled
+
         yield Vertical(
             Static(f"[bold]{self._deck_name}[/bold]", id="deck-title", markup=True),
             StatsBar(id="stats-bar"),
             VerticalScroll(
-                CardViewWidget(id="card-view"),
+                CardViewWidget(
+                    id="card-view",
+                    media_dir=media_dir,
+                    images_enabled=images_enabled,
+                ),
             ),
             Static(
                 self._get_help_text(),
@@ -72,12 +84,16 @@ class ReviewScreen(Screen[None]):
 
     def _get_help_text(self) -> str:
         """Get context-appropriate help text."""
+        img_status = "on" if self.clanki_app.state.images_enabled else "off"
         if not self._answer_revealed:
-            return "[dim]Space[/dim] reveal  [dim]Esc[/dim] back  [dim]q[/dim] quit"
+            return (
+                f"[dim]Space[/dim] reveal  [dim]i[/dim] img:{img_status}  "
+                "[dim]Esc[/dim] back  [dim]q[/dim] quit"
+            )
         return (
             "[dim]1[/dim] Again  [dim]2[/dim] Hard  "
             "[dim]3/Space[/dim] Good  [dim]4[/dim] Easy  "
-            "[dim]u[/dim] undo  [dim]Esc[/dim] back"
+            f"[dim]u[/dim] undo  [dim]i[/dim] img:{img_status}  [dim]Esc[/dim] back"
         )
 
     async def on_mount(self) -> None:
@@ -159,10 +175,17 @@ class ReviewScreen(Screen[None]):
 
     async def action_space_action(self) -> None:
         """Handle space key - reveal answer or rate Good."""
-        if not self._answer_revealed:
-            self._reveal_answer()
-        else:
-            await self._rate(Rating.GOOD)
+        # Guard against rapid key presses causing double actions
+        if self._processing_action:
+            return
+        self._processing_action = True
+        try:
+            if not self._answer_revealed:
+                self._reveal_answer()
+            else:
+                await self._rate(Rating.GOOD)
+        finally:
+            self._processing_action = False
 
     async def action_reveal(self) -> None:
         """Reveal the answer."""
@@ -171,11 +194,22 @@ class ReviewScreen(Screen[None]):
 
     def _reveal_answer(self) -> None:
         """Reveal the answer for the current card."""
+        import contextlib
+
         if self._current_card is None:
             return
 
         self._answer_revealed = True
-        self._display_card()
+        try:
+            self._display_card()
+        except Exception as exc:
+            # If display fails, disable images and retry
+            self.clanki_app.state.images_enabled = False
+            card_view = self.query_one("#card-view", CardViewWidget)
+            card_view.set_images_enabled(False)
+            self.notify(f"Image rendering error: {exc}", severity="warning")
+            with contextlib.suppress(Exception):
+                self._display_card()
 
     async def action_rate_again(self) -> None:
         """Rate the card as Again (1)."""
@@ -233,3 +267,44 @@ class ReviewScreen(Screen[None]):
     async def action_back_to_picker(self) -> None:
         """Return to the deck picker."""
         self.app.pop_screen()
+
+    async def action_toggle_images(self) -> None:
+        """Toggle image rendering on/off and persist to config."""
+        import clanki.tui.render as render_module
+
+        state = self.clanki_app.state
+
+        # Reset the cache to ensure fresh detection
+        render_module._chafa_available = None
+
+        # If trying to enable images, check if chafa is available
+        if not state.images_enabled and not is_image_support_available():
+            self.notify(
+                "Install chafa: brew install chafa (macOS) or apt install chafa (Linux)",
+                title="Image support not installed",
+                severity="warning",
+                timeout=5,
+            )
+            return
+
+        # Toggle the state
+        state.images_enabled = not state.images_enabled
+
+        # Update the card view widget
+        card_view = self.query_one("#card-view", CardViewWidget)
+        card_view.set_images_enabled(state.images_enabled)
+
+        # Re-display current card to ensure proper rendering with new image setting
+        self._display_card()
+
+        # Update help text to show new image status
+        help_bar = self.query_one("#help-bar", Static)
+        help_bar.update(self._get_help_text())
+
+        # Persist to config
+        config = Config(images_enabled=state.images_enabled)
+        save_config(config)
+
+        # Show notification
+        status = "enabled" if state.images_enabled else "disabled"
+        self.notify(f"Images {status}", severity="information")

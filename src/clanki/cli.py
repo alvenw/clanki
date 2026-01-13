@@ -10,8 +10,8 @@ This module provides the command-line interface with support for:
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
-from pathlib import Path
 
 from . import __version__
 from .collection import (
@@ -21,6 +21,7 @@ from .collection import (
     open_collection,
 )
 from .config import default_profile, resolve_anki_base, resolve_collection_path
+from .config_store import load_config
 from .render import render_html_to_text
 from .sync import SyncResult, run_sync
 
@@ -79,6 +80,32 @@ def _cmd_sync(args: argparse.Namespace) -> int:
         return 1
 
 
+def _check_image_support_available() -> bool:
+    """Check if chafa is available for image rendering."""
+    return shutil.which("chafa") is not None
+
+
+def _resolve_images_enabled(args: argparse.Namespace) -> bool:
+    """Resolve images_enabled from CLI flags or config.
+
+    CLI flags take precedence over stored config.
+    Returns False if chafa is not installed.
+    """
+    # If chafa not installed, images can't be enabled
+    if not _check_image_support_available():
+        return False
+
+    # CLI override takes precedence
+    if getattr(args, "images", None) is True:
+        return True
+    if getattr(args, "no_images", None) is True:
+        return False
+
+    # Fall back to config
+    config = load_config()
+    return config.images_enabled
+
+
 def _cmd_review(args: argparse.Namespace) -> int:
     """Handle review command."""
     from .review import DeckNotFoundError, Rating, ReviewSession
@@ -99,7 +126,12 @@ def _cmd_review(args: argparse.Namespace) -> int:
                 return 1
 
             collection_path = resolve_collection_path(anki_base, profile)
-            run_tui(collection_path=collection_path, initial_deck=deck_name)
+            images_enabled = _resolve_images_enabled(args)
+            run_tui(
+                collection_path=collection_path,
+                initial_deck=deck_name,
+                images_enabled=images_enabled,
+            )
             return 0
         except CollectionLockError as exc:
             print(f"Error: {exc}", file=sys.stderr)
@@ -268,7 +300,8 @@ def _cmd_default(args: argparse.Namespace) -> int:
                 return 1
 
             collection_path = resolve_collection_path(anki_base, profile)
-            run_tui(collection_path=collection_path)
+            images_enabled = _resolve_images_enabled(args)
+            run_tui(collection_path=collection_path, images_enabled=images_enabled)
             return 0
         except CollectionLockError as exc:
             print(f"Error: {exc}", file=sys.stderr)
@@ -368,6 +401,20 @@ def main(argv: list[str] | None = None) -> int:
         help="Force plain terminal mode (no TUI)",
     )
 
+    # Image rendering options (mutually exclusive)
+    images_group = parser.add_mutually_exclusive_group()
+    images_group.add_argument(
+        "--images",
+        action="store_true",
+        help="Enable image rendering in TUI (overrides config)",
+    )
+    images_group.add_argument(
+        "--no-images",
+        action="store_true",
+        dest="no_images",
+        help="Disable image rendering in TUI (overrides config)",
+    )
+
     subparsers = parser.add_subparsers(dest="command")
 
     # sync command
@@ -390,6 +437,20 @@ def main(argv: list[str] | None = None) -> int:
         "--plain",
         action="store_true",
         help="Force plain terminal mode (no TUI)",
+    )
+
+    # Image rendering options for review command
+    review_images_group = review_parser.add_mutually_exclusive_group()
+    review_images_group.add_argument(
+        "--images",
+        action="store_true",
+        help="Enable image rendering in TUI (overrides config)",
+    )
+    review_images_group.add_argument(
+        "--no-images",
+        action="store_true",
+        dest="no_images",
+        help="Disable image rendering in TUI (overrides config)",
     )
     review_parser.set_defaults(func=_cmd_review)
 

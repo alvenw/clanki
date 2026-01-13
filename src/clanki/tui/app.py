@@ -57,6 +57,7 @@ class AppState:
     media_dir: Path | None = None
     stats: SessionStats = field(default_factory=SessionStats)
     initial_deck: str | None = None
+    images_enabled: bool = True
 
 
 class ClankiApp(App[None]):
@@ -141,16 +142,18 @@ class ClankiApp(App[None]):
         self,
         collection_path: Path,
         initial_deck: str | None = None,
+        images_enabled: bool = True,
     ) -> None:
         """Initialize the Clanki app.
 
         Args:
             collection_path: Path to the Anki collection file.
             initial_deck: Optional deck name to start reviewing immediately.
+            images_enabled: Whether to render images in card views.
         """
         super().__init__()
         self._collection_path = collection_path
-        self._state = AppState(initial_deck=initial_deck)
+        self._state = AppState(initial_deck=initial_deck, images_enabled=images_enabled)
 
     @property
     def state(self) -> AppState:
@@ -193,12 +196,21 @@ class ClankiApp(App[None]):
         self._close_collection()
 
 
-def run_tui(collection_path: Path, initial_deck: str | None = None) -> None:
+def run_tui(
+    collection_path: Path,
+    initial_deck: str | None = None,
+    images_enabled: bool = True,
+) -> None:
     """Run the Clanki TUI.
 
     Args:
         collection_path: Path to the Anki collection file.
         initial_deck: Optional deck name to start reviewing immediately.
+        images_enabled: Whether to render images in card views.
     """
-    app = ClankiApp(collection_path=collection_path, initial_deck=initial_deck)
+    app = ClankiApp(
+        collection_path=collection_path,
+        initial_deck=initial_deck,
+        images_enabled=images_enabled,
+    )
     app.run()
