@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
-from rich.console import RenderableType
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
 from ..render import render_content_with_images
+
+logger = logging.getLogger(__name__)
 
 
 class CardViewWidget(Static):
@@ -133,8 +135,9 @@ class CardViewWidget(Static):
                 widgets.append(Static(renderable, classes="content"))
 
             return widgets if widgets else [Static(text, classes="content")]
-        except Exception:
+        except Exception as exc:
             # Fall back to plain text on any rendering error
+            logger.warning("Image rendering failed, using plain text: %s", exc)
             return [Static(text, classes="content")]
 
     def _refresh_content(self) -> None:
@@ -161,13 +164,14 @@ class CardViewWidget(Static):
                     classes="answer-section",
                 )
                 container.mount(answer_section)
-        except Exception:
+        except Exception as exc:
             # If mounting fails, try to show plain text fallback
+            logger.warning("Card content mounting failed, trying fallback: %s", exc)
             try:
                 container = self.query_one("#card-content", Vertical)
                 container.remove_children()
                 container.mount(Static(self._question, classes="content"))
                 if self._answer is not None:
                     container.mount(Static(self._answer, classes="content"))
-            except Exception:
-                pass  # Give up if fallback also fails
+            except Exception as fallback_exc:
+                logger.error("Fallback mounting also failed: %s", fallback_exc)

@@ -164,16 +164,16 @@ def render_content_with_images(
     if not _check_chafa_available():
         return [Text(text)]
 
-    # Build list of renderables
+    # Build list of renderables, preserving whitespace
     renderables: list[RenderableType] = []
     last_end = 0
 
     for placeholder in placeholders:
-        # Add text before this placeholder
+        # Add text before this placeholder (preserve whitespace)
         if placeholder.start > last_end:
             text_before = text[last_end : placeholder.start]
-            if text_before.strip():
-                renderables.append(Text(text_before.rstrip()))
+            if text_before:
+                renderables.append(Text(text_before))
 
         # Try to render the image to a string
         image_rendered = False
@@ -191,10 +191,10 @@ def render_content_with_images(
 
         last_end = placeholder.end
 
-    # Add remaining text after last placeholder
+    # Add remaining text after last placeholder (preserve whitespace)
     if last_end < len(text):
         text_after = text[last_end:]
-        if text_after.strip():
-            renderables.append(Text(text_after.lstrip()))
+        if text_after:
+            renderables.append(Text(text_after))
 
     return renderables if renderables else [Text(text)]
