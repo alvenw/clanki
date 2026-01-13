@@ -104,7 +104,9 @@ def _render_image_to_string(
         if max_width is not None and max_height is not None:
             cmd.extend(["--size", f"{max_width}x{max_height}"])
         elif max_width is not None:
-            cmd.extend(["--size", f"{max_width}"])
+            cmd.extend(["--size", f"{max_width}x"])
+        elif max_height is not None:
+            cmd.extend(["--size", f"x{max_height}"])
 
         # Add image path
         cmd.append(str(image_path))

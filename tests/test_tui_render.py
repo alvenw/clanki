@@ -174,6 +174,29 @@ class TestRenderImageToString:
 
         reset_cache()
 
+    def test_calls_chafa_with_height_only(self, tmp_path):
+        """Should call chafa with --size x{height} when only max_height is set."""
+        reset_cache()
+
+        image_path = tmp_path / "test.png"
+        image_path.touch()
+
+        with (
+            patch("shutil.which", return_value="/usr/bin/chafa"),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0, stdout="###\n")
+            _render_image_to_string(image_path, max_width=None, max_height=20)
+
+            mock_run.assert_called_once()
+            call_args = mock_run.call_args
+            cmd = call_args[0][0]
+
+            assert "--size" in cmd
+            assert "x20" in cmd
+
+        reset_cache()
+
     def test_returns_chafa_output(self, tmp_path):
         """Should return chafa's stdout on success."""
         reset_cache()
