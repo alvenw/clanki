@@ -133,17 +133,11 @@ def _cmd_review(args: argparse.Namespace) -> int:
                 images_enabled=images_enabled,
             )
             return 0
-        except CollectionLockError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            return 1
         except CollectionNotFoundError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
-            return 1
-        except Exception as exc:
-            print(f"Unexpected error: {exc}", file=sys.stderr)
             return 1
 
     # Plain mode fallback
@@ -303,17 +297,11 @@ def _cmd_default(args: argparse.Namespace) -> int:
             images_enabled = _resolve_images_enabled(args)
             run_tui(collection_path=collection_path, images_enabled=images_enabled)
             return 0
-        except CollectionLockError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            return 1
         except CollectionNotFoundError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
-            return 1
-        except Exception as exc:
-            print(f"Unexpected error: {exc}", file=sys.stderr)
             return 1
 
     # Plain mode fallback

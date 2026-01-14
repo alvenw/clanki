@@ -6,6 +6,7 @@ with proper lock handling and actionable error messages.
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -49,7 +50,7 @@ def validate_collection_path(path: str | Path) -> Path:
     return collection_path
 
 
-def open_collection(path: str | Path) -> "Collection":
+def open_collection(path: str | Path) -> Collection:
     """Open an Anki collection with lock-aware error handling.
 
     Args:
@@ -74,10 +75,14 @@ def open_collection(path: str | Path) -> "Collection":
         error_msg = str(exc).lower()
 
         # Check for lock-related errors
-        if "locked" in error_msg or "lock" in error_msg:
+        # Anki Desktop shows: "Anki already open, or media currently syncing."
+        if (
+            "locked" in error_msg
+            or "lock" in error_msg
+            or "anki already open" in error_msg
+        ):
             raise CollectionLockError(
-                f"Collection is locked. Please close Anki Desktop and try again.\n"
-                f"Path: {validated_path}"
+                "Anki Desktop is currently open. Please close Anki and try again."
             ) from exc
 
         # Re-raise with context
@@ -86,15 +91,12 @@ def open_collection(path: str | Path) -> "Collection":
         ) from exc
 
 
-def close_collection(col: "Collection") -> None:
+def close_collection(col: Collection) -> None:
     """Close an Anki collection safely.
 
     Args:
         col: Collection object to close. Can be None (no-op).
     """
     if col is not None:
-        try:
+        with contextlib.suppress(Exception):
             col.close()
-        except Exception:
-            # Ignore errors on close - collection may already be closed
-            pass

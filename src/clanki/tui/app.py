@@ -53,7 +53,7 @@ class SessionStats:
 class AppState:
     """Shared application state."""
 
-    col: "Collection | None" = None
+    col: Collection | None = None
     media_dir: Path | None = None
     stats: SessionStats = field(default_factory=SessionStats)
     initial_deck: str | None = None
@@ -162,11 +162,17 @@ class ClankiApp(App[None]):
 
     async def on_mount(self) -> None:
         """Open collection and push initial screen on mount."""
-        from ..collection import open_collection
+        from ..collection import CollectionLockError, open_collection
 
         # Open collection
-        self._state.col = open_collection(self._collection_path)
-        self._state.media_dir = Path(self._state.col.media.dir())
+        try:
+            self._state.col = open_collection(self._collection_path)
+            self._state.media_dir = Path(self._state.col.media.dir())
+        except CollectionLockError:
+            from .screens.collection_lock import CollectionLockScreen
+
+            await self.push_screen(CollectionLockScreen())
+            return
 
         # Push appropriate screen
         if self._state.initial_deck:

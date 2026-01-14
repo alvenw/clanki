@@ -90,7 +90,7 @@ clanki sync
 
 ## Troubleshooting
 
-### "Collection is locked" or "database is locked"
+### "Collection is locked" / "Anki already open, or media currently syncing"
 
 **Cause:** We cannot run both clanki and Anki Desktop at the same time as we lock the collection database to prevent the two from getting out of sync.
 
