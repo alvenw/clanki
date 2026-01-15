@@ -280,6 +280,11 @@ class _HTMLToTextRenderer(HTMLParser):
         # Image handling
         if tag == "img":
             attrs_dict = dict(attrs)
+            # Check for display: none in style attribute
+            style_str = attrs_dict.get("style", "") or ""
+            styles = self._parse_inline_style(style_str)
+            if styles.get("display") == "none":
+                return  # Skip hidden images
             src = attrs_dict.get("src", "")
             if src:
                 filename = self._extract_filename(src)
