@@ -93,42 +93,47 @@ def _process_raw_cloze_in_html(html: str, mode: RenderMode) -> str:
 # These cards use hidden divs to store content that JavaScript renders at runtime
 # Answer side: <div id="cloze-is-back" hidden="">...</div>
 # Question side: <div id="cloze-anki-rendered" hidden="">...</div>
-CLOZE_BACK_PATTERN = re.compile(
-    r'<div[^>]*id=["\']cloze-is-back["\'][^>]*hidden[^>]*>(.*?)</div>',
-    re.IGNORECASE | re.DOTALL
+# We need to "unhide" the relevant div while keeping the rest of the HTML intact
+CLOZE_BACK_TAG_PATTERN = re.compile(
+    r'(<div[^>]*id=["\']cloze-is-back["\'][^>]*)\s+hidden(?:="[^"]*")?([^>]*>)',
+    re.IGNORECASE
 )
-CLOZE_RENDERED_PATTERN = re.compile(
-    r'<div[^>]*id=["\']cloze-anki-rendered["\'][^>]*hidden[^>]*>(.*?)</div>',
-    re.IGNORECASE | re.DOTALL
+CLOZE_RENDERED_TAG_PATTERN = re.compile(
+    r'(<div[^>]*id=["\']cloze-anki-rendered["\'][^>]*)\s+hidden(?:="[^"]*")?([^>]*>)',
+    re.IGNORECASE
 )
 
 
-def _extract_cloze_overlapping_content(html: str, mode: RenderMode) -> str | None:
-    """Extract content from Cloze Overlapping card hidden divs.
+def _process_cloze_overlapping_html(html: str, mode: RenderMode) -> str:
+    """Process Cloze Overlapping card HTML to unhide the relevant content div.
 
     Cloze Overlapping cards use JavaScript to render content at runtime.
     The actual card content is stored in hidden divs:
     - cloze-is-back: Contains the answer with revealed cloze spans
     - cloze-anki-rendered: Contains the question with [...] placeholders
 
+    This function removes the 'hidden' attribute from the relevant div so it
+    gets rendered, while keeping the rest of the HTML intact (preserving any
+    extra info, images, etc. that should be shown).
+
     Args:
         html: HTML content from Anki card rendering.
-        mode: Render mode - ANSWER looks for cloze-is-back, QUESTION for cloze-anki-rendered.
+        mode: Render mode - ANSWER unhides cloze-is-back, QUESTION unhides cloze-anki-rendered.
 
     Returns:
-        Extracted content from the hidden div, or None if not a Cloze Overlapping card.
+        Modified HTML with the relevant div unhidden, or original HTML if not a Cloze Overlapping card.
     """
     if mode == RenderMode.ANSWER:
-        # Look for cloze-is-back div (answer content)
-        match = CLOZE_BACK_PATTERN.search(html)
-        if match:
-            return match.group(1)
+        # Unhide cloze-is-back div (answer content)
+        result = CLOZE_BACK_TAG_PATTERN.sub(r'\1\2', html)
+        if result != html:
+            return result
     else:
-        # Look for cloze-anki-rendered div (question content)
-        match = CLOZE_RENDERED_PATTERN.search(html)
-        if match:
-            return match.group(1)
-    return None
+        # Unhide cloze-anki-rendered div (question content)
+        result = CLOZE_RENDERED_TAG_PATTERN.sub(r'\1\2', html)
+        if result != html:
+            return result
+    return html
 
 
 @dataclass
@@ -183,7 +188,11 @@ class _HTMLToTextRenderer(HTMLParser):
     BLOCK_TAGS = {"br", "p", "div", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}
 
     # Tags whose content should be skipped entirely
-    SKIP_TAGS = {"style", "script"}
+    SKIP_TAGS = {"style", "script", "button"}
+
+    # Void elements (self-closing) that should be ignored
+    # These don't have closing tags, so we just skip them without tracking depth
+    VOID_SKIP_TAGS = {"input"}
 
     # Tags that can have hidden attribute and should skip content when hidden
     HIDEABLE_TAGS = {"div", "span", "p"}
@@ -309,6 +318,10 @@ class _HTMLToTextRenderer(HTMLParser):
         return changes
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        # Skip void elements entirely (no depth tracking needed)
+        if tag in self.VOID_SKIP_TAGS:
+            return
+
         if tag in self.SKIP_TAGS:
             self._skip_depth += 1
             return
@@ -549,12 +562,44 @@ def _process_media_tags(text: str) -> str:
     return text
 
 
+def _is_anki_tag_line(line: str) -> bool:
+    """Check if a line appears to be Anki card tags.
+
+    Anki tags use :: as hierarchical separators and appear as lines like:
+    "MileDown::Behavioral::Biology_and_Behavior"
+    "chapter1::section2"
+
+    Args:
+        line: A single line of text.
+
+    Returns:
+        True if the line looks like Anki tags (contains :: separators).
+    """
+    stripped = line.strip()
+    if not stripped:
+        return False
+    # Tags contain :: and typically don't have spaces (or have underscores)
+    # A tag line is one where the content is primarily tag-like
+    if "::" not in stripped:
+        return False
+    # Check if the line is primarily tags (words separated by ::)
+    # Real content would have more prose around it
+    parts = stripped.split()
+    # If it's a single "word" with :: in it, it's likely a tag
+    if len(parts) == 1:
+        return True
+    # If multiple space-separated parts all contain ::, likely all tags
+    tag_parts = sum(1 for p in parts if "::" in p)
+    return tag_parts == len(parts)
+
+
 def _normalize_whitespace(text: str) -> str:
     """Normalize whitespace while preserving paragraph breaks and indentation.
 
     - Collapses multiple spaces into one (preserving leading indent)
     - Collapses 3+ newlines into 2 (paragraph break)
     - Strips trailing whitespace from lines
+    - Filters out Anki tag lines
     """
     # Split into lines
     lines = text.splitlines()
@@ -576,6 +621,9 @@ def _normalize_whitespace(text: str) -> str:
         # Collapse internal whitespace
         content = " ".join(line.split())
         if content:
+            # Skip lines that are just Anki tags
+            if _is_anki_tag_line(content):
+                continue
             cleaned.append(leading + content)
         elif cleaned and cleaned[-1] != "":
             # Preserve one empty line for paragraph breaks
@@ -618,11 +666,9 @@ def render_html_to_text(
     if not html:
         return ""
 
-    # Check for Cloze Overlapping card pattern and extract content
+    # Process Cloze Overlapping cards by unhiding the relevant content div
     # This must happen BEFORE other processing since the content is in hidden divs
-    extracted = _extract_cloze_overlapping_content(html, mode)
-    if extracted:
-        html = extracted
+    html = _process_cloze_overlapping_html(html, mode)
 
     # Process raw cloze syntax BEFORE HTML parsing
     # This is necessary because cloze syntax may contain HTML tags
@@ -728,15 +774,173 @@ def _normalize_segments(segments: list[StyledSegment]) -> list[StyledSegment]:
         else:
             result.append(StyledSegment(text=normalized, style=seg.style))
 
-    # Final cleanup: collapse multiple spaces
+    # Final cleanup: collapse multiple spaces and newlines
     final: list[StyledSegment] = []
     for seg in result:
         # Collapse multiple consecutive spaces to single space
         text = re.sub(r" +", " ", seg.text)
+        # Collapse 3+ newlines to 2 (one paragraph break)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        # Remove lines that are just whitespace
+        text = re.sub(r"\n[ \t]+\n", "\n\n", text)
         if text:
             final.append(StyledSegment(text=text, style=seg.style))
 
-    return final
+    # Strip leading/trailing whitespace from the combined result
+    if final:
+        # Strip leading newlines/whitespace from first segment
+        first = final[0]
+        final[0] = StyledSegment(text=first.text.lstrip(), style=first.style)
+        if not final[0].text:
+            final.pop(0)
+
+    if final:
+        # Strip trailing newlines/whitespace from last segment
+        last = final[-1]
+        final[-1] = StyledSegment(text=last.text.rstrip(), style=last.style)
+        if not final[-1].text:
+            final.pop()
+
+    return [s for s in final if s.text]
+
+
+def _collapse_segment_newlines(segments: list[StyledSegment]) -> list[StyledSegment]:
+    """Collapse excessive newlines across segment boundaries.
+
+    This handles the case where multiple segments each end/start with newlines,
+    resulting in too many consecutive newlines in the final output.
+
+    Args:
+        segments: List of styled segments.
+
+    Returns:
+        Segments with excessive newlines collapsed to max 2 (one paragraph break).
+    """
+    if not segments:
+        return []
+
+    # Join all text, collapse newlines, then rebuild
+    full_text = "".join(s.text for s in segments)
+
+    # Collapse 3+ newlines to 2
+    collapsed_text = re.sub(r"\n{3,}", "\n\n", full_text)
+
+    # If no change, return original
+    if collapsed_text == full_text:
+        return segments
+
+    # Rebuild segments by mapping positions
+    result: list[StyledSegment] = []
+    orig_pos = 0
+    collapsed_pos = 0
+
+    for seg in segments:
+        seg_text = seg.text
+        new_chars = []
+
+        for char in seg_text:
+            # Find where this char maps to in collapsed text
+            if orig_pos < len(full_text) and collapsed_pos < len(collapsed_text):
+                # Check if this position was kept
+                if full_text[orig_pos] == collapsed_text[collapsed_pos]:
+                    new_chars.append(char)
+                    collapsed_pos += 1
+            orig_pos += 1
+
+        if new_chars:
+            result.append(StyledSegment(text="".join(new_chars), style=seg.style))
+
+    # Merge consecutive segments with same style
+    merged: list[StyledSegment] = []
+    for seg in result:
+        if merged and merged[-1].style == seg.style:
+            merged[-1] = StyledSegment(text=merged[-1].text + seg.text, style=seg.style)
+        else:
+            merged.append(seg)
+
+    return [s for s in merged if s.text]
+
+
+def _filter_tag_segments(segments: list[StyledSegment]) -> list[StyledSegment]:
+    """Filter out Anki tag lines from styled segments.
+
+    Removes segments or parts of segments that are purely Anki tags.
+    Tags are detected by the :: hierarchical separator pattern.
+
+    Args:
+        segments: List of styled segments to filter.
+
+    Returns:
+        Filtered list with tag lines removed.
+    """
+    if not segments:
+        return []
+
+    # Join all text and split by newlines to filter tag lines
+    full_text = "".join(s.text for s in segments)
+    lines = full_text.split("\n")
+
+    # Filter out tag lines
+    filtered_lines = [line for line in lines if not _is_anki_tag_line(line)]
+    filtered_text = "\n".join(filtered_lines)
+
+    # If nothing was filtered, return original
+    if filtered_text == full_text:
+        return segments
+
+    # Rebuild segments with filtered text
+    # This is a simplified approach - we map character positions
+    result: list[StyledSegment] = []
+    text_pos = 0
+    filtered_pos = 0
+
+    for seg in segments:
+        seg_len = len(seg.text)
+        seg_end = text_pos + seg_len
+
+        # Find how much of this segment's text survives filtering
+        new_text_parts = []
+        for i, char in enumerate(seg.text):
+            orig_pos = text_pos + i
+            # Check if this character is in filtered output
+            # by checking if we're in a removed line
+            line_start = full_text.rfind("\n", 0, orig_pos + 1) + 1
+            line_end = full_text.find("\n", orig_pos)
+            if line_end == -1:
+                line_end = len(full_text)
+            line = full_text[line_start:line_end]
+
+            if not _is_anki_tag_line(line):
+                new_text_parts.append(char)
+
+        new_text = "".join(new_text_parts)
+        if new_text:
+            result.append(StyledSegment(text=new_text, style=seg.style))
+
+        text_pos = seg_end
+
+    # Clean up: merge adjacent segments with same style, remove empty
+    cleaned: list[StyledSegment] = []
+    for seg in result:
+        if not seg.text:
+            continue
+        if cleaned and cleaned[-1].style == seg.style:
+            cleaned[-1] = StyledSegment(
+                text=cleaned[-1].text + seg.text, style=seg.style
+            )
+        else:
+            cleaned.append(seg)
+
+    # Remove leading/trailing newlines from result
+    if cleaned:
+        first = cleaned[0]
+        cleaned[0] = StyledSegment(text=first.text.lstrip("\n"), style=first.style)
+        if cleaned:
+            last = cleaned[-1]
+            cleaned[-1] = StyledSegment(text=last.text.rstrip("\n"), style=last.style)
+
+    # Filter out now-empty segments
+    return [s for s in cleaned if s.text]
 
 
 def render_html_to_styled_segments(
@@ -759,11 +963,9 @@ def render_html_to_styled_segments(
     if not html:
         return []
 
-    # Check for Cloze Overlapping card pattern and extract content
+    # Process Cloze Overlapping cards by unhiding the relevant content div
     # This must happen BEFORE other processing since the content is in hidden divs
-    extracted = _extract_cloze_overlapping_content(html, mode)
-    if extracted:
-        html = extracted
+    html = _process_cloze_overlapping_html(html, mode)
 
     # Process raw cloze syntax BEFORE HTML parsing
     # This is necessary because cloze syntax may contain HTML tags
@@ -783,4 +985,10 @@ def render_html_to_styled_segments(
             processed.append(StyledSegment(text=text, style=seg.style))
 
     # Normalize segments
-    return _normalize_segments(processed)
+    normalized = _normalize_segments(processed)
+
+    # Filter out Anki tag segments
+    filtered = _filter_tag_segments(normalized)
+
+    # Final pass: collapse excessive newlines across segment boundaries
+    return _collapse_segment_newlines(filtered)

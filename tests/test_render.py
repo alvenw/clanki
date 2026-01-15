@@ -533,3 +533,68 @@ class TestHiddenElements:
         # Should not see raw cloze syntax from hidden div
         assert "{{c1::" not in result
         assert "cloze-original" not in result
+
+    def test_cloze_overlapping_with_extra_content(self):
+        """Cloze Overlapping cards should preserve extra content outside hidden divs."""
+        html = '''
+        <div id="cloze-is-back" hidden=""><span class="cloze">Answer text</span></div>
+        <div id="cloze-original" hidden="">{{c1::Answer text}}</div>
+        <div class="extra">Extra info shown on back</div>
+        <div>More visible content</div>
+        '''
+        result = render_html_to_text(html, mode=RenderMode.ANSWER)
+        # Should see cloze answer
+        assert "Answer text" in result
+        # Should see extra content
+        assert "Extra info shown on back" in result
+        assert "More visible content" in result
+        # Should not see raw cloze syntax
+        assert "{{c1::" not in result
+
+
+class TestAnkiTagFiltering:
+    """Tests for filtering Anki card tags from rendered output."""
+
+    def test_single_hierarchical_tag_filtered(self):
+        """Single hierarchical tag line should be filtered out."""
+        html = "<div>MileDown::Behavioral::Biology_and_Behavior</div><div>Actual content</div>"
+        result = render_html_to_text(html)
+        assert "MileDown" not in result
+        assert "Behavioral" not in result
+        assert "Actual content" in result
+
+    def test_multiple_tags_on_line_filtered(self):
+        """Multiple tags on same line should be filtered out."""
+        html = "<div>tag1::sub1 tag2::sub2</div><div>Content here</div>"
+        result = render_html_to_text(html)
+        assert "tag1" not in result
+        assert "tag2" not in result
+        assert "Content here" in result
+
+    def test_content_with_double_colon_preserved(self):
+        """Normal content containing :: should be preserved."""
+        html = "<div>The ratio is 1::2 in chemistry</div>"
+        result = render_html_to_text(html)
+        assert "ratio is 1::2" in result
+
+    def test_cpp_preserved(self):
+        """C++ and similar should not be filtered."""
+        html = "<div>C++ is a programming language</div>"
+        result = render_html_to_text(html)
+        assert "C++" in result
+
+    def test_tag_with_underscores_filtered(self):
+        """Tags with underscores (common in Anki) should be filtered."""
+        html = "<div>Chapter_1::Section_2::Topic_3</div><div>The answer is 42</div>"
+        result = render_html_to_text(html)
+        assert "Chapter" not in result
+        assert "Section" not in result
+        assert "answer is 42" in result
+
+    def test_styled_segments_tag_filtered(self):
+        """Tags should also be filtered in styled segments output."""
+        html = "<div>MileDown::Behavioral</div><div><b>Bold content</b></div>"
+        segments = render_html_to_styled_segments(html)
+        text = "".join(s.text for s in segments)
+        assert "MileDown" not in text
+        assert "Bold content" in text
