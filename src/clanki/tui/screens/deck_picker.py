@@ -16,6 +16,8 @@ from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import Input, ListItem, ListView, Static
 
+from ..widgets import AsciiLogo
+
 if TYPE_CHECKING:
     from ..app import ClankiApp
 
@@ -95,6 +97,7 @@ class DeckPickerScreen(Screen[str]):
 
     def compose(self) -> ComposeResult:
         yield Vertical(
+            AsciiLogo(id="logo"),
             Input(placeholder="Filter decks...", id="filter-input"),
             ListView(id="deck-list"),
             Static(
