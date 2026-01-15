@@ -2,7 +2,12 @@
 
 from pathlib import Path
 
-from clanki.render.html import render_html_to_text
+from clanki.render.html import (
+    RenderMode,
+    is_cloze_card,
+    render_html_to_styled_segments,
+    render_html_to_text,
+)
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -226,3 +231,189 @@ class TestEmptyInput:
         """Whitespace-only input should return empty string."""
         result = render_html_to_text("   \n\n   ")
         assert result == ""
+
+
+class TestClozeDetection:
+    """Tests for cloze card detection."""
+
+    def test_detects_cloze_span(self):
+        """Should detect cloze span with class attribute."""
+        html = '<div>The answer is <span class="cloze">42</span>.</div>'
+        assert is_cloze_card(html) is True
+
+    def test_detects_cloze_with_other_classes(self):
+        """Should detect cloze even with other classes."""
+        html = '<span class="highlight cloze active">answer</span>'
+        assert is_cloze_card(html) is True
+
+    def test_no_cloze_returns_false(self):
+        """Should return False for non-cloze HTML."""
+        html = "<div>Regular content without cloze</div>"
+        assert is_cloze_card(html) is False
+
+    def test_empty_html_returns_false(self):
+        """Should return False for empty HTML."""
+        assert is_cloze_card("") is False
+        assert is_cloze_card(None) is False  # type: ignore
+
+    def test_cloze_fixture(self):
+        """Test cloze detection with fixture file."""
+        html = (FIXTURES_DIR / "cloze.html").read_text()
+        assert is_cloze_card(html) is True
+
+
+class TestClozeRendering:
+    """Tests for cloze deletion rendering."""
+
+    def test_question_mode_shows_placeholder(self):
+        """In question mode, cloze content should be replaced with [...]."""
+        html = '<div>The answer is <span class="cloze">42</span>.</div>'
+        result = render_html_to_text(html, mode=RenderMode.QUESTION)
+        assert "[...]" in result
+        assert "42" not in result
+        assert "The answer is" in result
+
+    def test_answer_mode_shows_content(self):
+        """In answer mode, cloze content should be visible."""
+        html = '<div>The answer is <span class="cloze">42</span>.</div>'
+        result = render_html_to_text(html, mode=RenderMode.ANSWER)
+        assert "42" in result
+        assert "[...]" not in result
+        assert "The answer is" in result
+
+    def test_multiple_cloze_question_mode(self):
+        """Multiple cloze deletions should all show [...] in question mode."""
+        html = '<span class="cloze">Paris</span> is the capital of <span class="cloze">France</span>.'
+        result = render_html_to_text(html, mode=RenderMode.QUESTION)
+        assert result.count("[...]") == 2
+        assert "Paris" not in result
+        assert "France" not in result
+
+    def test_multiple_cloze_answer_mode(self):
+        """Multiple cloze deletions should all be visible in answer mode."""
+        html = '<span class="cloze">Paris</span> is the capital of <span class="cloze">France</span>.'
+        result = render_html_to_text(html, mode=RenderMode.ANSWER)
+        assert "Paris" in result
+        assert "France" in result
+        assert "[...]" not in result
+
+    def test_cloze_fixture_question_mode(self):
+        """Test cloze fixture in question mode."""
+        html = (FIXTURES_DIR / "cloze.html").read_text()
+        result = render_html_to_text(html, mode=RenderMode.QUESTION)
+        assert "[...]" in result
+        assert "Paris" not in result
+        assert "Seine" not in result
+
+    def test_cloze_fixture_answer_mode(self):
+        """Test cloze fixture in answer mode."""
+        html = (FIXTURES_DIR / "cloze.html").read_text()
+        result = render_html_to_text(html, mode=RenderMode.ANSWER)
+        assert "Paris" in result
+        assert "Seine" in result
+        assert "[...]" not in result
+
+    def test_default_mode_is_answer(self):
+        """Default render mode should be ANSWER (backward compatible)."""
+        html = '<span class="cloze">visible</span>'
+        result = render_html_to_text(html)
+        assert "visible" in result
+
+
+class TestStyledSegments:
+    """Tests for styled segment rendering."""
+
+    def test_bold_tag_creates_bold_segment(self):
+        """Bold tags should create segments with bold style."""
+        html = "<b>bold text</b> normal"
+        segments = render_html_to_styled_segments(html)
+        # Find the bold segment
+        bold_segments = [s for s in segments if s.style.bold and "bold" in s.text]
+        assert len(bold_segments) >= 1
+
+    def test_italic_tag_creates_italic_segment(self):
+        """Italic tags should create segments with italic style."""
+        html = "<i>italic text</i>"
+        segments = render_html_to_styled_segments(html)
+        italic_segments = [s for s in segments if s.style.italic]
+        assert len(italic_segments) >= 1
+
+    def test_cloze_answer_mode_creates_cloze_segment(self):
+        """Cloze in answer mode should create segment with is_cloze=True."""
+        html = '<span class="cloze">answer</span>'
+        segments = render_html_to_styled_segments(html, mode=RenderMode.ANSWER)
+        cloze_segments = [s for s in segments if s.style.is_cloze]
+        assert len(cloze_segments) >= 1
+        assert any("answer" in s.text for s in cloze_segments)
+
+    def test_cloze_question_mode_placeholder(self):
+        """Cloze in question mode should show [...] placeholder."""
+        html = '<span class="cloze">hidden</span>'
+        segments = render_html_to_styled_segments(html, mode=RenderMode.QUESTION)
+        text = "".join(s.text for s in segments)
+        assert "[...]" in text
+        assert "hidden" not in text
+
+    def test_inline_style_bold(self):
+        """Inline style font-weight:bold should create bold segment."""
+        html = '<span style="font-weight: bold;">styled bold</span>'
+        segments = render_html_to_styled_segments(html)
+        bold_segments = [s for s in segments if s.style.bold]
+        assert len(bold_segments) >= 1
+
+    def test_inline_style_color(self):
+        """Inline style color should be captured."""
+        html = '<span style="color: red;">red text</span>'
+        segments = render_html_to_styled_segments(html)
+        color_segments = [s for s in segments if s.style.color]
+        assert len(color_segments) >= 1
+        assert any(s.style.color == "red" for s in color_segments)
+
+    def test_spacing_preserved_around_styled_text(self):
+        """Spaces should be preserved around styled segments to prevent word concatenation."""
+        html = 'word <b>bold</b> next'
+        segments = render_html_to_styled_segments(html)
+        text = "".join(s.text for s in segments)
+        # Should have spaces between words, not "wordboldnext"
+        assert "wordbold" not in text
+        assert "boldnext" not in text
+
+    def test_spacing_added_when_missing_around_styled_text(self):
+        """Spaces should be added between styled text and adjacent words even if missing in HTML."""
+        # HTML without spaces around bold tag
+        html = 'word<b>bold</b>next'
+        segments = render_html_to_styled_segments(html)
+        text = "".join(s.text for s in segments)
+        # Should add spaces to prevent "wordboldnext"
+        assert "wordbold" not in text
+        assert "boldnext" not in text
+        assert "word" in text
+        assert "bold" in text
+        assert "next" in text
+
+    def test_cloze_spacing_preserved(self):
+        """Spaces should be preserved around cloze deletions."""
+        html = 'The <span class="cloze">answer</span> is here'
+        segments = render_html_to_styled_segments(html, mode=RenderMode.ANSWER)
+        text = "".join(s.text for s in segments)
+        # Should be "The answer is here", not "Theansweris here"
+        assert "Theanswer" not in text
+        assert "answeris" not in text
+
+    def test_cloze_no_leading_space_at_start(self):
+        """Cloze at start of card should not have leading space."""
+        html = '<span class="cloze">Answer</span> is the first word'
+        segments = render_html_to_styled_segments(html, mode=RenderMode.ANSWER)
+        text = "".join(s.text for s in segments)
+        # Should not start with a space
+        assert not text.startswith(" ")
+        assert text.startswith("Answer")
+
+    def test_cloze_spacing_added_when_missing(self):
+        """Spaces should be added around cloze even if missing in original HTML."""
+        html = 'word<span class="cloze">cloze</span>next'
+        segments = render_html_to_styled_segments(html, mode=RenderMode.ANSWER)
+        text = "".join(s.text for s in segments)
+        # Should add spaces to prevent "wordclozenext"
+        assert "wordcloze" not in text
+        assert "clozenext" not in text

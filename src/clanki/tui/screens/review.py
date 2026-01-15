@@ -178,22 +178,16 @@ class ReviewScreen(Screen[None]):
         if self._current_card is None:
             return
 
-        media_dir = self.clanki_app.state.media_dir
         card_view = self.query_one("#card-view", CardViewWidget)
 
-        question = render_html_to_text(
-            self._current_card.question_html,
-            media_dir=media_dir,
-        )
-
+        # Pass raw HTML to the card view - it handles styled rendering internally
         if self._answer_revealed:
-            answer = render_html_to_text(
+            card_view.show_answer(
+                self._current_card.question_html,
                 self._current_card.answer_html,
-                media_dir=media_dir,
             )
-            card_view.show_answer(question, answer)
         else:
-            card_view.show_question(question)
+            card_view.show_question(self._current_card.question_html)
 
         # Update help text
         help_bar = self.query_one("#help-bar", Static)

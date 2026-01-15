@@ -5,13 +5,17 @@ from unittest.mock import MagicMock, patch
 
 from rich.text import Text
 
+from clanki.render import RenderMode, StyledSegment, TextStyle
 from clanki.tui.render import (
     ImagePlaceholder,
     _check_chafa_available,
     _render_image_to_string,
+    _segment_to_rich_style,
     is_image_support_available,
     parse_image_placeholders,
     render_content_with_images,
+    render_styled_content_with_images,
+    segments_to_rich_text,
 )
 
 
@@ -351,3 +355,117 @@ class TestImagePlaceholderDataclass:
         p1 = ImagePlaceholder(filename="test.jpg", start=10, end=25)
         p2 = ImagePlaceholder(filename="other.jpg", start=10, end=25)
         assert p1 != p2
+
+
+class TestSegmentToRichStyle:
+    """Tests for _segment_to_rich_style function."""
+
+    def test_default_style_returns_empty(self):
+        """Default style should return empty Rich Style."""
+        segment = StyledSegment(text="test", style=TextStyle())
+        style = _segment_to_rich_style(segment)
+        # Empty style has no attributes set
+        assert style.bold is None or style.bold is False
+
+    def test_bold_style(self):
+        """Bold style should set bold attribute."""
+        segment = StyledSegment(text="test", style=TextStyle(bold=True))
+        style = _segment_to_rich_style(segment)
+        assert style.bold is True
+
+    def test_italic_style(self):
+        """Italic style should set italic attribute."""
+        segment = StyledSegment(text="test", style=TextStyle(italic=True))
+        style = _segment_to_rich_style(segment)
+        assert style.italic is True
+
+    def test_underline_style(self):
+        """Underline style should set underline attribute."""
+        segment = StyledSegment(text="test", style=TextStyle(underline=True))
+        style = _segment_to_rich_style(segment)
+        assert style.underline is True
+
+    def test_strikethrough_style(self):
+        """Strikethrough style should set strike attribute."""
+        segment = StyledSegment(text="test", style=TextStyle(strikethrough=True))
+        style = _segment_to_rich_style(segment)
+        assert style.strike is True
+
+    def test_cloze_style_sets_bold_and_reverse(self):
+        """Cloze style should set bold and reverse for visibility."""
+        segment = StyledSegment(text="test", style=TextStyle(is_cloze=True))
+        style = _segment_to_rich_style(segment)
+        assert style.bold is True
+        assert style.reverse is True
+
+
+class TestSegmentsToRichText:
+    """Tests for segments_to_rich_text function."""
+
+    def test_empty_segments(self):
+        """Empty segments should return empty Text."""
+        text = segments_to_rich_text([])
+        assert str(text) == ""
+
+    def test_single_segment(self):
+        """Single segment should be converted to Text."""
+        segments = [StyledSegment(text="hello", style=TextStyle())]
+        text = segments_to_rich_text(segments)
+        assert str(text) == "hello"
+
+    def test_multiple_segments(self):
+        """Multiple segments should be concatenated."""
+        segments = [
+            StyledSegment(text="hello ", style=TextStyle()),
+            StyledSegment(text="world", style=TextStyle(bold=True)),
+        ]
+        text = segments_to_rich_text(segments)
+        assert str(text) == "hello world"
+
+
+class TestRenderStyledContentWithImages:
+    """Tests for render_styled_content_with_images function."""
+
+    def test_empty_html(self):
+        """Empty HTML should return empty list."""
+        result = render_styled_content_with_images("", None, True)
+        assert result == []
+
+    def test_simple_html(self):
+        """Simple HTML should be rendered to styled text."""
+        result = render_styled_content_with_images(
+            "<div>Hello world</div>", None, True
+        )
+        assert len(result) >= 1
+        assert isinstance(result[0], Text)
+        assert "Hello world" in str(result[0])
+
+    def test_cloze_question_mode(self):
+        """Cloze in question mode should show placeholder."""
+        html = '<span class="cloze">answer</span>'
+        result = render_styled_content_with_images(
+            html, None, True, mode=RenderMode.QUESTION
+        )
+        assert len(result) >= 1
+        text = str(result[0])
+        assert "[...]" in text
+        assert "answer" not in text
+
+    def test_cloze_answer_mode(self):
+        """Cloze in answer mode should show styled answer."""
+        html = '<span class="cloze">answer</span>'
+        result = render_styled_content_with_images(
+            html, None, True, mode=RenderMode.ANSWER
+        )
+        assert len(result) >= 1
+        text = str(result[0])
+        assert "answer" in text
+        assert "[...]" not in text
+
+    def test_bold_text_styled(self):
+        """Bold HTML should create styled Rich Text."""
+        html = "<b>bold</b> normal"
+        result = render_styled_content_with_images(html, None, True)
+        assert len(result) >= 1
+        # The result should be a Rich Text object with styling
+        assert isinstance(result[0], Text)
