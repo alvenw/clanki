@@ -9,7 +9,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
-from ...render import RenderMode, is_cloze_card
+from ...render import RenderMode
 from ..render import render_styled_content_with_images
 
 logger = logging.getLogger(__name__)
@@ -24,23 +24,10 @@ class CardViewWidget(Static):
         padding: 1 2;
     }
 
-    CardViewWidget .question-section {
+    CardViewWidget .card-section {
         border: solid $primary;
         padding: 1 2;
-        margin-bottom: 1;
         height: auto;
-    }
-
-    CardViewWidget .answer-section {
-        border: solid $success;
-        padding: 1 2;
-        height: auto;
-    }
-
-    CardViewWidget .section-label {
-        color: $text-muted;
-        text-style: bold;
-        margin-bottom: 1;
     }
 
     CardViewWidget .content {
@@ -104,15 +91,8 @@ class CardViewWidget(Static):
             # Widget padding: 1 2 (top/bottom, left/right) = 4 horizontal, 2 vertical
             # Section border: 1 each side = 2 horizontal, 2 vertical
             # Section padding: 1 2 = 4 horizontal, 2 vertical
-            # Section label: 1 line + 1 margin
             container_width = self.size.width - 12  # Total horizontal padding/borders
-            container_height = self.size.height - 10  # Vertical space minus chrome
-
-            # If showing both question and answer (non-cloze card), halve the height
-            # Cloze cards use single section, so they get full height
-            is_cloze = is_cloze_card(self._answer_html or self._question_html)
-            if self._answer_html is not None and not is_cloze:
-                container_height = container_height // 2 - 2
+            container_height = self.size.height - 8  # Vertical space minus chrome
 
             return (
                 max(10, container_width) if container_width > 0 else None,
@@ -157,69 +137,40 @@ class CardViewWidget(Static):
             return [Static(html, classes="content")]
 
     def _refresh_content(self) -> None:
-        """Refresh the widget content."""
+        """Refresh the widget content.
+
+        Always renders a single card section (Anki-style):
+        - Question state: shows question_html with QUESTION mode (cloze shows [...])
+        - Answer revealed: shows only answer_html with ANSWER mode
+          (answer HTML typically includes front via {{FrontSide}})
+        """
         try:
             container = self.query_one("#card-content", Vertical)
             container.remove_children()
 
-            # Check if this is a cloze card
-            is_cloze = is_cloze_card(self._answer_html or self._question_html)
-
-            if is_cloze and self._answer_html is not None:
-                # Cloze card with answer revealed: single section with answer HTML
-                # The answer HTML contains the full card with cloze revealed
+            if self._answer_html is not None:
+                # Answer revealed: render answer HTML only
                 content_widgets = self._render_section_content(
                     self._answer_html, mode=RenderMode.ANSWER
                 )
-                content_section = Vertical(
-                    Static("[bold]Card[/bold]", classes="section-label", markup=True),
-                    *content_widgets,
-                    classes="question-section",  # Use question styling for main content
-                )
-                container.mount(content_section)
-            elif is_cloze:
-                # Cloze card, question only: show with [...] placeholder
-                question_widgets = self._render_section_content(
+            else:
+                # Question only: render with QUESTION mode for cloze handling
+                content_widgets = self._render_section_content(
                     self._question_html, mode=RenderMode.QUESTION
                 )
-                question_section = Vertical(
-                    Static("[bold]Card[/bold]", classes="section-label", markup=True),
-                    *question_widgets,
-                    classes="question-section",
-                )
-                container.mount(question_section)
-            else:
-                # Non-cloze card: show Question + Answer sections
-                # Question section
-                question_widgets = self._render_section_content(
-                    self._question_html, mode=RenderMode.ANSWER
-                )
-                question_section = Vertical(
-                    Static("[bold]Question[/bold]", classes="section-label", markup=True),
-                    *question_widgets,
-                    classes="question-section",
-                )
-                container.mount(question_section)
 
-                # Answer section (if revealed)
-                if self._answer_html is not None:
-                    answer_widgets = self._render_section_content(
-                        self._answer_html, mode=RenderMode.ANSWER
-                    )
-                    answer_section = Vertical(
-                        Static("[bold]Answer[/bold]", classes="section-label", markup=True),
-                        *answer_widgets,
-                        classes="answer-section",
-                    )
-                    container.mount(answer_section)
+            content_section = Vertical(
+                *content_widgets,
+                classes="card-section",
+            )
+            container.mount(content_section)
         except Exception as exc:
             # If mounting fails, try to show plain text fallback
             logger.warning("Card content mounting failed, trying fallback: %s", exc)
             try:
                 container = self.query_one("#card-content", Vertical)
                 container.remove_children()
-                container.mount(Static(self._question_html, classes="content"))
-                if self._answer_html is not None:
-                    container.mount(Static(self._answer_html, classes="content"))
+                html = self._answer_html if self._answer_html else self._question_html
+                container.mount(Static(html, classes="content"))
             except Exception as fallback_exc:
                 logger.error("Fallback mounting also failed: %s", fallback_exc)
