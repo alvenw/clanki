@@ -417,3 +417,119 @@ class TestStyledSegments:
         # Should add spaces to prevent "wordclozenext"
         assert "wordcloze" not in text
         assert "clozenext" not in text
+
+
+class TestRawCloze:
+    """Tests for raw cloze syntax {{cN::answer::hint}} handling."""
+
+    def test_raw_cloze_question_mode_simple(self):
+        """Simple raw cloze should show [...] in question mode."""
+        html = "The answer is {{c1::42}}."
+        result = render_html_to_text(html, mode=RenderMode.QUESTION)
+        assert "[...]" in result
+        assert "42" not in result
+
+    def test_raw_cloze_answer_mode_simple(self):
+        """Simple raw cloze should show answer in answer mode."""
+        html = "The answer is {{c1::42}}."
+        result = render_html_to_text(html, mode=RenderMode.ANSWER)
+        assert "42" in result
+        assert "{{" not in result
+
+    def test_raw_cloze_with_hint_question_mode(self):
+        """Raw cloze with hint should show [hint] in question mode."""
+        html = "Vector-valued functions have {{c1::any number of::how many}} inputs."
+        result = render_html_to_text(html, mode=RenderMode.QUESTION)
+        assert "[how many]" in result
+        assert "any number of" not in result
+
+    def test_raw_cloze_with_hint_answer_mode(self):
+        """Raw cloze with hint should show answer in answer mode."""
+        html = "Vector-valued functions have {{c1::any number of::how many}} inputs."
+        result = render_html_to_text(html, mode=RenderMode.ANSWER)
+        assert "any number of" in result
+        assert "[how many]" not in result
+        assert "{{" not in result
+
+    def test_multiple_raw_cloze_question_mode(self):
+        """Multiple raw clozes should all show placeholders in question mode."""
+        html = "{{c1::Paris}} is the capital of {{c2::France}}."
+        result = render_html_to_text(html, mode=RenderMode.QUESTION)
+        assert result.count("[...]") == 2
+        assert "Paris" not in result
+        assert "France" not in result
+
+    def test_multiple_raw_cloze_answer_mode(self):
+        """Multiple raw clozes should all show answers in answer mode."""
+        html = "{{c1::Paris}} is the capital of {{c2::France}}."
+        result = render_html_to_text(html, mode=RenderMode.ANSWER)
+        assert "Paris" in result
+        assert "France" in result
+        assert "[...]" not in result
+
+    def test_raw_cloze_detection(self):
+        """is_cloze_card should detect raw cloze syntax."""
+        html = "The answer is {{c1::42}}."
+        assert is_cloze_card(html) is True
+
+    def test_raw_cloze_with_ellipsis_hint(self):
+        """Raw cloze with ellipsis hint should work."""
+        html = "{{c2::Vector-valued functions::...-valued functions}}"
+        result = render_html_to_text(html, mode=RenderMode.QUESTION)
+        assert "[...-valued functions]" in result
+
+    def test_styled_segments_raw_cloze(self):
+        """Raw cloze should be processed in styled segments."""
+        html = "Answer: {{c1::42::number}}"
+        segments = render_html_to_styled_segments(html, mode=RenderMode.QUESTION)
+        text = "".join(s.text for s in segments)
+        assert "[number]" in text
+        assert "42" not in text
+
+    def test_raw_cloze_with_html_inside(self):
+        """Raw cloze with HTML tags inside should be processed correctly."""
+        html = "{{c1::<b>bold answer</b>::hint}}"
+        result = render_html_to_text(html, mode=RenderMode.ANSWER)
+        assert "bold answer" in result
+        assert "{{" not in result
+
+    def test_raw_cloze_with_html_question_mode(self):
+        """Raw cloze with HTML should show hint in question mode."""
+        html = "{{c2::<u>underlined</u>::styled hint}}"
+        result = render_html_to_text(html, mode=RenderMode.QUESTION)
+        assert "[styled hint]" in result
+        assert "underlined" not in result
+
+
+class TestHiddenElements:
+    """Tests for hidden element handling."""
+
+    def test_hidden_div_skipped(self):
+        """Content inside hidden div should be skipped."""
+        html = '<div hidden="">hidden content</div><div>visible content</div>'
+        result = render_html_to_text(html)
+        assert "visible content" in result
+        assert "hidden content" not in result
+
+    def test_hidden_span_skipped(self):
+        """Content inside hidden span should be skipped."""
+        html = '<span hidden="">hidden</span>visible'
+        result = render_html_to_text(html)
+        assert "visible" in result
+        assert "hidden" not in result
+
+    def test_cloze_overlapping_pattern(self):
+        """Test the Cloze Overlapping card pattern with hidden divs."""
+        # Simulating the card template structure
+        html = '''
+        <div id="cloze-original" hidden="">{{c1::answer::hint}}</div>
+        <div id="cloze-anki-rendered" hidden=""><span class="cloze">[hint]</span></div>
+        <div id="visible">Visible: <span class="cloze">answer</span></div>
+        '''
+        result = render_html_to_text(html, mode=RenderMode.ANSWER)
+        # Should only see content from visible div
+        assert "Visible" in result
+        assert "answer" in result
+        # Should not see raw cloze syntax from hidden div
+        assert "{{c1::" not in result
+        assert "cloze-original" not in result

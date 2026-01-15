@@ -32,6 +32,15 @@ class RenderMode(Enum):
 # Pattern to detect cloze span in HTML
 CLOZE_PATTERN = re.compile(r'<span[^>]*class="[^"]*cloze[^"]*"[^>]*>', re.IGNORECASE)
 
+# Pattern for raw cloze syntax: {{c1::answer}} or {{c1::answer::hint}}
+# The answer and hint may contain HTML tags, so we use a more permissive pattern.
+# Groups: (1) cloze number, (2) answer text (may contain HTML), (3) optional hint
+# Uses non-greedy matching to handle nested content properly.
+RAW_CLOZE_PATTERN = re.compile(
+    r'\{\{c(\d+)::(.*?)(?:::(.*?))?\}\}',
+    re.DOTALL  # Allow . to match newlines
+)
+
 
 def is_cloze_card(html: str) -> bool:
     """Check if HTML contains cloze deletion markers.
@@ -40,11 +49,86 @@ def is_cloze_card(html: str) -> bool:
         html: HTML content from Anki card rendering.
 
     Returns:
-        True if the HTML contains cloze span markers.
+        True if the HTML contains cloze span markers or raw cloze syntax.
     """
     if not html:
         return False
-    return bool(CLOZE_PATTERN.search(html))
+    return bool(CLOZE_PATTERN.search(html)) or bool(RAW_CLOZE_PATTERN.search(html))
+
+
+def _process_raw_cloze_in_html(html: str, mode: RenderMode) -> str:
+    """Process raw cloze syntax {{cN::answer::hint}} in HTML before parsing.
+
+    This must be called BEFORE HTML parsing because the cloze syntax may contain
+    HTML tags that would split the syntax across text nodes.
+
+    Args:
+        html: Raw HTML that may contain raw cloze syntax.
+        mode: Render mode - QUESTION shows [...] or hint, ANSWER shows answer.
+
+    Returns:
+        HTML with raw cloze syntax replaced appropriately.
+    """
+
+    def replace_cloze(match: re.Match[str]) -> str:
+        # cloze_num = match.group(1)  # Not used currently, but could filter by card
+        answer = match.group(2)
+        hint = match.group(3)  # May be None
+
+        if mode == RenderMode.QUESTION:
+            # In question mode, show hint if available, otherwise [...]
+            # Strip HTML from hint for cleaner display
+            hint_text = re.sub(r'<[^>]+>', '', hint) if hint else None
+            if hint_text:
+                return f"[{hint_text}]"
+            return "[...]"
+        else:
+            # In answer mode, return the answer (with any HTML tags intact)
+            return answer
+
+    return RAW_CLOZE_PATTERN.sub(replace_cloze, html)
+
+
+# Patterns for Cloze Overlapping card templates
+# These cards use hidden divs to store content that JavaScript renders at runtime
+# Answer side: <div id="cloze-is-back" hidden="">...</div>
+# Question side: <div id="cloze-anki-rendered" hidden="">...</div>
+CLOZE_BACK_PATTERN = re.compile(
+    r'<div[^>]*id=["\']cloze-is-back["\'][^>]*hidden[^>]*>(.*?)</div>',
+    re.IGNORECASE | re.DOTALL
+)
+CLOZE_RENDERED_PATTERN = re.compile(
+    r'<div[^>]*id=["\']cloze-anki-rendered["\'][^>]*hidden[^>]*>(.*?)</div>',
+    re.IGNORECASE | re.DOTALL
+)
+
+
+def _extract_cloze_overlapping_content(html: str, mode: RenderMode) -> str | None:
+    """Extract content from Cloze Overlapping card hidden divs.
+
+    Cloze Overlapping cards use JavaScript to render content at runtime.
+    The actual card content is stored in hidden divs:
+    - cloze-is-back: Contains the answer with revealed cloze spans
+    - cloze-anki-rendered: Contains the question with [...] placeholders
+
+    Args:
+        html: HTML content from Anki card rendering.
+        mode: Render mode - ANSWER looks for cloze-is-back, QUESTION for cloze-anki-rendered.
+
+    Returns:
+        Extracted content from the hidden div, or None if not a Cloze Overlapping card.
+    """
+    if mode == RenderMode.ANSWER:
+        # Look for cloze-is-back div (answer content)
+        match = CLOZE_BACK_PATTERN.search(html)
+        if match:
+            return match.group(1)
+    else:
+        # Look for cloze-anki-rendered div (question content)
+        match = CLOZE_RENDERED_PATTERN.search(html)
+        if match:
+            return match.group(1)
+    return None
 
 
 @dataclass
@@ -101,6 +185,9 @@ class _HTMLToTextRenderer(HTMLParser):
     # Tags whose content should be skipped entirely
     SKIP_TAGS = {"style", "script"}
 
+    # Tags that can have hidden attribute and should skip content when hidden
+    HIDEABLE_TAGS = {"div", "span", "p"}
+
     # Tags that apply text styling
     BOLD_TAGS = {"b", "strong"}
     ITALIC_TAGS = {"i", "em"}
@@ -116,6 +203,7 @@ class _HTMLToTextRenderer(HTMLParser):
         super().__init__()
         self._chunks: list[str] = []
         self._skip_depth = 0
+        self._hidden_depth = 0  # Track nested hidden elements
         self._list_depth = 0
         self._in_list_item = False
         self._media_dir = Path(media_dir) if media_dir else None
@@ -132,6 +220,8 @@ class _HTMLToTextRenderer(HTMLParser):
         # Style tracking (for styled output)
         self._segments: list[StyledSegment] = []
         self._style_stack: list[TextStyle] = [TextStyle()]  # Current style at top
+        # Track tags that were hidden (for proper closing)
+        self._hidden_tag_stack: list[str] = []
 
     def _current_style(self) -> TextStyle:
         """Get the current style from the stack."""
@@ -164,6 +254,13 @@ class _HTMLToTextRenderer(HTMLParser):
         attrs_dict = dict(attrs)
         class_attr = attrs_dict.get("class", "") or ""
         return "cloze" in class_attr.split()
+
+    def _has_hidden_attr(self, attrs: list[tuple[str, str | None]]) -> bool:
+        """Check if element has hidden attribute."""
+        for name, _ in attrs:
+            if name.lower() == "hidden":
+                return True
+        return False
 
     def _parse_inline_style(self, style_str: str) -> dict[str, str]:
         """Parse inline CSS style attribute into a dict."""
@@ -217,6 +314,15 @@ class _HTMLToTextRenderer(HTMLParser):
             return
 
         if self._skip_depth > 0:
+            return
+
+        # Check for hidden attribute on hideable tags
+        if tag in self.HIDEABLE_TAGS and self._has_hidden_attr(attrs):
+            self._hidden_depth += 1
+            self._hidden_tag_stack.append(tag)
+            return
+
+        if self._hidden_depth > 0:
             return
 
         # Cloze span handling - must come before general span handling
@@ -304,6 +410,13 @@ class _HTMLToTextRenderer(HTMLParser):
         if self._skip_depth > 0:
             return
 
+        # Check if we're closing a hidden element
+        if self._hidden_depth > 0:
+            if self._hidden_tag_stack and self._hidden_tag_stack[-1] == tag:
+                self._hidden_depth -= 1
+                self._hidden_tag_stack.pop()
+            return
+
         # Cloze span end handling - must come before general span handling
         if tag == "span" and self._in_cloze:
             self._in_cloze = False
@@ -373,6 +486,8 @@ class _HTMLToTextRenderer(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         if self._skip_depth > 0:
+            return
+        if self._hidden_depth > 0:
             return
         if not data:
             return
@@ -502,6 +617,16 @@ def render_html_to_text(
     """
     if not html:
         return ""
+
+    # Check for Cloze Overlapping card pattern and extract content
+    # This must happen BEFORE other processing since the content is in hidden divs
+    extracted = _extract_cloze_overlapping_content(html, mode)
+    if extracted:
+        html = extracted
+
+    # Process raw cloze syntax BEFORE HTML parsing
+    # This is necessary because cloze syntax may contain HTML tags
+    html = _process_raw_cloze_in_html(html, mode)
 
     # Parse HTML and extract text
     renderer = _HTMLToTextRenderer(media_dir=media_dir, mode=mode, styled=False)
@@ -633,6 +758,16 @@ def render_html_to_styled_segments(
     """
     if not html:
         return []
+
+    # Check for Cloze Overlapping card pattern and extract content
+    # This must happen BEFORE other processing since the content is in hidden divs
+    extracted = _extract_cloze_overlapping_content(html, mode)
+    if extracted:
+        html = extracted
+
+    # Process raw cloze syntax BEFORE HTML parsing
+    # This is necessary because cloze syntax may contain HTML tags
+    html = _process_raw_cloze_in_html(html, mode)
 
     # Parse HTML and extract styled segments
     renderer = _HTMLToTextRenderer(media_dir=media_dir, mode=mode, styled=True)
