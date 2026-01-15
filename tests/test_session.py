@@ -1,7 +1,7 @@
 """Tests for review/session.py - review session wrapper with mocked Anki components."""
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -77,6 +77,8 @@ class MockRenderOutput:
 
     question_text: str
     answer_text: str
+    question_av_tags: list = field(default_factory=list)
+    answer_av_tags: list = field(default_factory=list)
 
 
 def create_mock_collection(deck_name: str = "Test Deck", deck_id: int = 1234):

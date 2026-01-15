@@ -47,11 +47,15 @@ class Config:
     """Application configuration settings."""
 
     images_enabled: bool = True
+    audio_enabled: bool = True
+    audio_autoplay: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary for serialization."""
         return {
             "images_enabled": self.images_enabled,
+            "audio_enabled": self.audio_enabled,
+            "audio_autoplay": self.audio_autoplay,
         }
 
     @classmethod
@@ -59,6 +63,8 @@ class Config:
         """Create config from dictionary."""
         return cls(
             images_enabled=data.get("images_enabled", True),
+            audio_enabled=data.get("audio_enabled", True),
+            audio_autoplay=data.get("audio_autoplay", True),
         )
 
 

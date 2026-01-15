@@ -6,7 +6,7 @@ answering, and undo operations.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any
 
@@ -50,6 +50,24 @@ class DeckCounts:
         return self.new_count + self.learn_count + self.review_count
 
 
+def _extract_audio_filenames(av_tags: list[Any]) -> list[str]:
+    """Extract audio filenames from Anki AV tags.
+
+    Args:
+        av_tags: List of AV tags from render_output (SoundOrVideoTag or TTSTag).
+
+    Returns:
+        List of audio filenames (sound files only, not TTS).
+    """
+    filenames = []
+    for tag in av_tags:
+        # Tags can be SoundOrVideoTag (has filename attr) or TTSTag
+        # We only handle sound/video files, not TTS
+        if hasattr(tag, "filename") and tag.filename:
+            filenames.append(tag.filename)
+    return filenames
+
+
 @dataclass
 class CardView:
     """View of a card for review.
@@ -62,6 +80,8 @@ class CardView:
     answer_html: str
     card: "Card"
     states: Any  # SchedulingStates protobuf
+    question_audio: list[str] = field(default_factory=list)  # Audio filenames for question
+    answer_audio: list[str] = field(default_factory=list)  # Audio filenames for answer
 
 
 class ReviewSession:
@@ -187,6 +207,8 @@ class ReviewSession:
             answer_html=render_output.answer_text,
             card=card,
             states=queued_card.states,
+            question_audio=_extract_audio_filenames(render_output.question_av_tags),
+            answer_audio=_extract_audio_filenames(render_output.answer_av_tags),
         )
 
         self._current_card = card_view
@@ -289,6 +311,8 @@ class ReviewSession:
             answer_html=render_output.answer_text,
             card=card,
             states=queued_card.states,
+            question_audio=_extract_audio_filenames(render_output.question_av_tags),
+            answer_audio=_extract_audio_filenames(render_output.answer_av_tags),
         )
 
         self._current_card = card_view

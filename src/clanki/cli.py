@@ -5,6 +5,7 @@ This module provides the command-line interface with support for:
 - Plain terminal mode
 - Review mode with deck selection
 - Sync mode
+- Audio playback support (macOS only)
 """
 
 from __future__ import annotations
@@ -12,8 +13,14 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
+from pathlib import Path
 
 from . import __version__
+from .audio import (
+    is_audio_playback_available,
+    play_audio_for_side,
+    substitute_audio_icons,
+)
 from .collection import (
     CollectionLockError,
     CollectionNotFoundError,
@@ -106,6 +113,43 @@ def _resolve_images_enabled(args: argparse.Namespace) -> bool:
     return config.images_enabled
 
 
+def _resolve_audio_enabled(args: argparse.Namespace) -> bool:
+    """Resolve audio_enabled from CLI flags or config.
+
+    CLI flags take precedence over stored config.
+    Returns False if audio playback is not available.
+    """
+    # If audio not available, can't be enabled
+    if not is_audio_playback_available():
+        return False
+
+    # CLI override takes precedence
+    if getattr(args, "audio", None) is True:
+        return True
+    if getattr(args, "no_audio", None) is True:
+        return False
+
+    # Fall back to config
+    config = load_config()
+    return config.audio_enabled
+
+
+def _resolve_audio_autoplay(args: argparse.Namespace) -> bool:
+    """Resolve audio_autoplay from CLI flags or config.
+
+    CLI flags take precedence over stored config.
+    """
+    # CLI override takes precedence
+    if getattr(args, "audio_autoplay", None) is True:
+        return True
+    if getattr(args, "no_audio_autoplay", None) is True:
+        return False
+
+    # Fall back to config
+    config = load_config()
+    return config.audio_autoplay
+
+
 def _cmd_review(args: argparse.Namespace) -> int:
     """Handle review command."""
     from .review import DeckNotFoundError, Rating, ReviewSession
@@ -127,10 +171,14 @@ def _cmd_review(args: argparse.Namespace) -> int:
 
             collection_path = resolve_collection_path(anki_base, profile)
             images_enabled = _resolve_images_enabled(args)
+            audio_enabled = _resolve_audio_enabled(args)
+            audio_autoplay = _resolve_audio_autoplay(args)
             run_tui(
                 collection_path=collection_path,
                 initial_deck=deck_name,
                 images_enabled=images_enabled,
+                audio_enabled=audio_enabled,
+                audio_autoplay=audio_autoplay,
             )
             return 0
         except CollectionNotFoundError as exc:
@@ -141,6 +189,8 @@ def _cmd_review(args: argparse.Namespace) -> int:
             return 1
 
     # Plain mode fallback
+    audio_enabled = _resolve_audio_enabled(args)
+    audio_autoplay = _resolve_audio_autoplay(args)
     try:
         anki_base = resolve_anki_base()
         profile = default_profile(anki_base)
@@ -172,34 +222,79 @@ def _cmd_review(args: argparse.Namespace) -> int:
 
             # Get media directory for rendering
             media_dir = col.media.dir()
+            media_dir_path = Path(media_dir) if media_dir else None
+
+            # Helper function to play audio for a side
+            def play_audio(text: str, audio_files: list[str]) -> None:
+                if audio_enabled and media_dir_path:
+                    play_audio_for_side(
+                        text=text,
+                        audio_files=audio_files,
+                        media_dir=media_dir_path,
+                        on_error=lambda msg: print(f"Audio: {msg}"),
+                    )
 
             # Plain review loop
             reviewed = 0
+            answer_revealed = False
+
             while True:
                 card = session.next_card()
                 if card is None:
                     break
 
+                answer_revealed = False
+
                 # Show question
                 question = render_html_to_text(card.question_html, media_dir=media_dir)
+                # Substitute audio placeholders with icons for display
+                question_display = substitute_audio_icons(question)
                 print("-" * 40)
                 print(f"Card {reviewed + 1}")
                 print("-" * 40)
-                print(f"\nQuestion:\n{question}\n")
+                print(f"\nQuestion:\n{question_display}\n")
+
+                # Auto-play question audio
+                if audio_autoplay:
+                    play_audio(question, card.question_audio)
+
+                # Get prompt text (includes audio replay option if available)
+                reveal_prompt = "Press Enter to show answer"
+                if audio_enabled:
+                    reveal_prompt += " (a=replay audio)"
+                reveal_prompt += "..."
 
                 # Wait for user to reveal answer
-                try:
-                    input("Press Enter to show answer...")
-                except (EOFError, KeyboardInterrupt):
-                    print("\nExiting review.")
-                    break
+                while not answer_revealed:
+                    try:
+                        user_input = input(reveal_prompt).strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        print("\nExiting review.")
+                        close_collection(col)
+                        return 0
+
+                    if user_input == "a" and audio_enabled:
+                        play_audio(question, card.question_audio)
+                        continue
+                    else:
+                        answer_revealed = True
 
                 # Show answer
                 answer = render_html_to_text(card.answer_html, media_dir=media_dir)
-                print(f"\nAnswer:\n{answer}\n")
+                answer_display = substitute_audio_icons(answer)
+                print(f"\nAnswer:\n{answer_display}\n")
 
-                # Get rating
-                print("Rate: (1) Again  (2) Hard  (3) Good  (4) Easy  (u) Undo  (q) Quit")
+                # Auto-play answer audio
+                if audio_autoplay:
+                    play_audio(answer, card.answer_audio)
+
+                # Get rating prompt (includes audio replay option)
+                rating_prompt = "Rate: (1) Again  (2) Hard  (3) Good  (4) Easy  (u) Undo"
+                if audio_enabled:
+                    rating_prompt += "  (a) Replay"
+                rating_prompt += "  (q) Quit"
+                print(rating_prompt)
+
                 while True:
                     try:
                         choice = input("> ").strip().lower()
@@ -213,6 +308,10 @@ def _cmd_review(args: argparse.Namespace) -> int:
                         close_collection(col)
                         return 0
 
+                    if choice == "a" and audio_enabled:
+                        play_audio(answer, card.answer_audio)
+                        continue
+
                     if choice == "u":
                         try:
                             card = session.undo()
@@ -220,11 +319,11 @@ def _cmd_review(args: argparse.Namespace) -> int:
                             # Re-display the card
                             question = render_html_to_text(card.question_html, media_dir=media_dir)
                             answer = render_html_to_text(card.answer_html, media_dir=media_dir)
-                            print(f"\nQuestion:\n{question}\n")
-                            print(f"Answer:\n{answer}\n")
-                            print(
-                                "Rate: (1) Again  (2) Hard  (3) Good  (4) Easy  (u) Undo  (q) Quit"
-                            )
+                            question_display = substitute_audio_icons(question)
+                            answer_display = substitute_audio_icons(answer)
+                            print(f"\nQuestion:\n{question_display}\n")
+                            print(f"Answer:\n{answer_display}\n")
+                            print(rating_prompt)
                             continue
                         except Exception as exc:
                             print(f"Cannot undo: {exc}")
@@ -241,7 +340,7 @@ def _cmd_review(args: argparse.Namespace) -> int:
                         reviewed += 1
                         break
 
-                    print("Invalid choice. Use 1-4, u, or q.")
+                    print("Invalid choice. Use 1-4, u, a, or q.")
 
                 print()
 
@@ -295,7 +394,14 @@ def _cmd_default(args: argparse.Namespace) -> int:
 
             collection_path = resolve_collection_path(anki_base, profile)
             images_enabled = _resolve_images_enabled(args)
-            run_tui(collection_path=collection_path, images_enabled=images_enabled)
+            audio_enabled = _resolve_audio_enabled(args)
+            audio_autoplay = _resolve_audio_autoplay(args)
+            run_tui(
+                collection_path=collection_path,
+                images_enabled=images_enabled,
+                audio_enabled=audio_enabled,
+                audio_autoplay=audio_autoplay,
+            )
             return 0
         except CollectionNotFoundError as exc:
             print(f"Error: {exc}", file=sys.stderr)
@@ -403,6 +509,35 @@ def main(argv: list[str] | None = None) -> int:
         help="Disable image rendering in TUI (overrides config)",
     )
 
+    # Audio playback options (mutually exclusive)
+    audio_group = parser.add_mutually_exclusive_group()
+    audio_group.add_argument(
+        "--audio",
+        action="store_true",
+        help="Enable audio playback (overrides config, macOS only)",
+    )
+    audio_group.add_argument(
+        "--no-audio",
+        action="store_true",
+        dest="no_audio",
+        help="Disable audio playback (overrides config)",
+    )
+
+    # Audio autoplay options (mutually exclusive)
+    autoplay_group = parser.add_mutually_exclusive_group()
+    autoplay_group.add_argument(
+        "--audio-autoplay",
+        action="store_true",
+        dest="audio_autoplay",
+        help="Enable auto-play of audio on card display (overrides config)",
+    )
+    autoplay_group.add_argument(
+        "--no-audio-autoplay",
+        action="store_true",
+        dest="no_audio_autoplay",
+        help="Disable auto-play of audio (overrides config)",
+    )
+
     subparsers = parser.add_subparsers(dest="command")
 
     # sync command
@@ -440,6 +575,36 @@ def main(argv: list[str] | None = None) -> int:
         dest="no_images",
         help="Disable image rendering in TUI (overrides config)",
     )
+
+    # Audio playback options for review command
+    review_audio_group = review_parser.add_mutually_exclusive_group()
+    review_audio_group.add_argument(
+        "--audio",
+        action="store_true",
+        help="Enable audio playback (overrides config, macOS only)",
+    )
+    review_audio_group.add_argument(
+        "--no-audio",
+        action="store_true",
+        dest="no_audio",
+        help="Disable audio playback (overrides config)",
+    )
+
+    # Audio autoplay options for review command
+    review_autoplay_group = review_parser.add_mutually_exclusive_group()
+    review_autoplay_group.add_argument(
+        "--audio-autoplay",
+        action="store_true",
+        dest="audio_autoplay",
+        help="Enable auto-play of audio on card display (overrides config)",
+    )
+    review_autoplay_group.add_argument(
+        "--no-audio-autoplay",
+        action="store_true",
+        dest="no_audio_autoplay",
+        help="Disable auto-play of audio (overrides config)",
+    )
+
     review_parser.set_defaults(func=_cmd_review)
 
     args = parser.parse_args(argv)

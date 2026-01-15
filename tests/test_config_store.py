@@ -23,30 +23,43 @@ class TestConfig:
         """Config should have sensible defaults."""
         config = Config()
         assert config.images_enabled is True
+        assert config.audio_enabled is True
+        assert config.audio_autoplay is True
 
     def test_to_dict(self):
         """Config should serialize to dict."""
-        config = Config(images_enabled=False)
+        config = Config(images_enabled=False, audio_enabled=False, audio_autoplay=False)
         data = config.to_dict()
-        assert data == {"images_enabled": False}
+        assert data == {
+            "images_enabled": False,
+            "audio_enabled": False,
+            "audio_autoplay": False,
+        }
 
     def test_from_dict(self):
         """Config should deserialize from dict."""
-        data = {"images_enabled": False}
+        data = {"images_enabled": False, "audio_enabled": False, "audio_autoplay": False}
         config = Config.from_dict(data)
         assert config.images_enabled is False
+        assert config.audio_enabled is False
+        assert config.audio_autoplay is False
 
     def test_from_dict_missing_key(self):
         """Config should use defaults for missing keys."""
         data = {}
         config = Config.from_dict(data)
         assert config.images_enabled is True
+        assert config.audio_enabled is True
+        assert config.audio_autoplay is True
 
     def test_from_dict_extra_keys(self):
         """Config should ignore extra keys."""
         data = {"images_enabled": False, "unknown_key": "value"}
         config = Config.from_dict(data)
         assert config.images_enabled is False
+        # Audio settings should still be defaults
+        assert config.audio_enabled is True
+        assert config.audio_autoplay is True
 
 
 class TestConfigDir:

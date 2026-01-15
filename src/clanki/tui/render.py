@@ -1,7 +1,8 @@
 """TUI-specific rendering helpers for card content.
 
 This module parses card text for [image: filename] placeholders and
-renders them using chafa when available and enabled.
+renders them using chafa when available and enabled. It also handles
+audio placeholder icon substitution.
 """
 
 from __future__ import annotations
@@ -14,6 +15,8 @@ from pathlib import Path
 
 from rich.console import RenderableType
 from rich.text import Text
+
+from ..audio import substitute_audio_icons
 
 # Pattern to match [image: filename] placeholders
 IMAGE_PLACEHOLDER_PATTERN = re.compile(r"\[image:\s*([^\]]+)\]")
@@ -140,8 +143,10 @@ def render_content_with_images(
 ) -> list[RenderableType]:
     """Render card content, replacing image placeholders with actual images.
 
+    Also substitutes audio placeholders with an audio icon.
+
     Args:
-        text: Card text content with [image: filename] placeholders.
+        text: Card text content with [image: filename] and [audio: ...] placeholders.
         media_dir: Path to Anki media directory.
         images_enabled: Whether to attempt image rendering.
         max_width: Maximum width for images in terminal cells.
@@ -153,6 +158,9 @@ def render_content_with_images(
     """
     if not text:
         return []
+
+    # First, substitute audio placeholders with icons
+    text = substitute_audio_icons(text)
 
     placeholders = parse_image_placeholders(text)
 

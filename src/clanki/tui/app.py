@@ -58,6 +58,8 @@ class AppState:
     stats: SessionStats = field(default_factory=SessionStats)
     initial_deck: str | None = None
     images_enabled: bool = True
+    audio_enabled: bool = True
+    audio_autoplay: bool = True
 
 
 class ClankiApp(App[None]):
@@ -143,6 +145,8 @@ class ClankiApp(App[None]):
         collection_path: Path,
         initial_deck: str | None = None,
         images_enabled: bool = True,
+        audio_enabled: bool = True,
+        audio_autoplay: bool = True,
     ) -> None:
         """Initialize the Clanki app.
 
@@ -150,10 +154,17 @@ class ClankiApp(App[None]):
             collection_path: Path to the Anki collection file.
             initial_deck: Optional deck name to start reviewing immediately.
             images_enabled: Whether to render images in card views.
+            audio_enabled: Whether audio playback is enabled.
+            audio_autoplay: Whether to auto-play audio on card display/reveal.
         """
         super().__init__()
         self._collection_path = collection_path
-        self._state = AppState(initial_deck=initial_deck, images_enabled=images_enabled)
+        self._state = AppState(
+            initial_deck=initial_deck,
+            images_enabled=images_enabled,
+            audio_enabled=audio_enabled,
+            audio_autoplay=audio_autoplay,
+        )
 
     @property
     def state(self) -> AppState:
@@ -206,6 +217,8 @@ def run_tui(
     collection_path: Path,
     initial_deck: str | None = None,
     images_enabled: bool = True,
+    audio_enabled: bool = True,
+    audio_autoplay: bool = True,
 ) -> None:
     """Run the Clanki TUI.
 
@@ -213,10 +226,14 @@ def run_tui(
         collection_path: Path to the Anki collection file.
         initial_deck: Optional deck name to start reviewing immediately.
         images_enabled: Whether to render images in card views.
+        audio_enabled: Whether audio playback is enabled.
+        audio_autoplay: Whether to auto-play audio on card display/reveal.
     """
     app = ClankiApp(
         collection_path=collection_path,
         initial_deck=initial_deck,
         images_enabled=images_enabled,
+        audio_enabled=audio_enabled,
+        audio_autoplay=audio_autoplay,
     )
     app.run()

@@ -4,6 +4,7 @@ This screen handles the card review flow:
 - Show question, reveal answer on space/enter
 - If answer visible, space submits Good rating
 - Support 1-4 ratings, undo, and back to picker
+- Audio playback with auto-play and replay support
 """
 
 from __future__ import annotations
@@ -16,7 +17,13 @@ from textual.containers import Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Static
 
-from ...config_store import Config, save_config
+from ...audio import (
+    is_audio_playback_available,
+    play_audio_by_index,
+    play_audio_for_side,
+    stop_audio,
+)
+from ...config_store import Config, load_config, save_config
 from ...render import render_html_to_text
 from ...review import CardView, DeckNotFoundError, Rating, ReviewSession, UndoError
 from ..render import is_image_support_available
@@ -39,8 +46,15 @@ class ReviewScreen(Screen[None]):
         Binding("2", "rate_hard", "Hard", show=False),
         Binding("3", "rate_good", "Good", show=False),
         Binding("4", "rate_easy", "Easy", show=False),
+        Binding("5", "play_audio_1", "Audio1", show=False),
+        Binding("6", "play_audio_2", "Audio2", show=False),
+        Binding("7", "play_audio_3", "Audio3", show=False),
+        Binding("8", "play_audio_4", "Audio4", show=False),
+        Binding("9", "play_audio_5", "Audio5", show=False),
         Binding("u", "undo", "Undo", show=False),
         Binding("i", "toggle_images", "Images", show=False),
+        Binding("a", "replay_audio", "Audio", show=False),
+        Binding("s", "toggle_audio", "Sound", show=False),
     ]
 
     def __init__(self, deck_name: str) -> None:
@@ -84,16 +98,20 @@ class ReviewScreen(Screen[None]):
 
     def _get_help_text(self) -> str:
         """Get context-appropriate help text."""
-        img_status = "on" if self.clanki_app.state.images_enabled else "off"
+        state = self.clanki_app.state
+        img_status = "on" if state.images_enabled else "off"
+        snd_status = "on" if state.audio_enabled else "off"
         if not self._answer_revealed:
             return (
-                f"[dim]Space[/dim] reveal  [dim]i[/dim] img:{img_status}  "
-                "[dim]Esc[/dim] back  [dim]q[/dim] quit"
+                f"[dim]Space[/dim] reveal  [dim]a[/dim] replay  "
+                f"[dim]s[/dim] snd:{snd_status}  [dim]i[/dim] img:{img_status}  "
+                "[dim]Esc[/dim] back"
             )
         return (
             "[dim]1[/dim] Again  [dim]2[/dim] Hard  "
             "[dim]3/Space[/dim] Good  [dim]4[/dim] Easy  "
-            f"[dim]u[/dim] undo  [dim]i[/dim] img:{img_status}  [dim]Esc[/dim] back"
+            f"[dim]u[/dim] undo  [dim]a[/dim] replay  "
+            f"[dim]s[/dim] snd:{snd_status}  [dim]i[/dim] img:{img_status}"
         )
 
     async def on_mount(self) -> None:
@@ -113,6 +131,10 @@ class ReviewScreen(Screen[None]):
 
         self._update_stats()
         await self._load_next_card()
+
+    def on_unmount(self) -> None:
+        """Stop audio when leaving the screen."""
+        stop_audio()
 
     def _update_stats(self) -> None:
         """Update the stats bar with current deck counts."""
@@ -147,8 +169,12 @@ class ReviewScreen(Screen[None]):
 
         self._display_card()
 
-    def _display_card(self) -> None:
-        """Display the current card content."""
+    def _display_card(self, play_audio: bool = True) -> None:
+        """Display the current card content.
+
+        Args:
+            play_audio: Whether to auto-play audio for this display update.
+        """
         if self._current_card is None:
             return
 
@@ -172,6 +198,52 @@ class ReviewScreen(Screen[None]):
         # Update help text
         help_bar = self.query_one("#help-bar", Static)
         help_bar.update(self._get_help_text())
+
+        # Auto-play audio if enabled
+        if play_audio:
+            self._maybe_play_audio()
+
+    def _maybe_play_audio(self) -> None:
+        """Play audio for the current side if audio is enabled and autoplay is on."""
+        state = self.clanki_app.state
+        if not state.audio_enabled or not state.audio_autoplay:
+            return
+        self._play_current_side_audio()
+
+    def _play_current_side_audio(self) -> None:
+        """Play audio for the current card side (question or answer)."""
+        if self._current_card is None:
+            return
+
+        state = self.clanki_app.state
+        if not state.audio_enabled:
+            return
+
+        media_dir = state.media_dir
+
+        # Determine which side to play
+        if self._answer_revealed:
+            # Play answer audio
+            text = render_html_to_text(
+                self._current_card.answer_html,
+                media_dir=media_dir,
+            )
+            audio_files = self._current_card.answer_audio
+        else:
+            # Play question audio
+            text = render_html_to_text(
+                self._current_card.question_html,
+                media_dir=media_dir,
+            )
+            audio_files = self._current_card.question_audio
+
+        # Play audio
+        play_audio_for_side(
+            text=text,
+            audio_files=audio_files,
+            media_dir=media_dir,
+            on_error=lambda msg: self.notify(msg, severity="warning"),
+        )
 
     async def action_space_action(self) -> None:
         """Handle space key - reveal answer or rate Good."""
@@ -231,6 +303,71 @@ class ReviewScreen(Screen[None]):
         if self._answer_revealed:
             await self._rate(Rating.EASY)
 
+    def _play_indexed_audio(self, index: int) -> None:
+        """Play a specific audio file by index.
+
+        Args:
+            index: 1-based audio index (matches 🔊1, 🔊2, etc. in display).
+        """
+        if self._current_card is None:
+            return
+
+        state = self.clanki_app.state
+        if not state.audio_enabled:
+            self.notify("Audio is disabled (press 's' to enable)", severity="warning")
+            return
+
+        if not is_audio_playback_available():
+            self.notify(
+                "Audio playback is only supported on macOS",
+                severity="warning",
+            )
+            return
+
+        media_dir = state.media_dir
+
+        # Determine which side's audio to play
+        if self._answer_revealed:
+            text = render_html_to_text(
+                self._current_card.answer_html,
+                media_dir=media_dir,
+            )
+            audio_files = self._current_card.answer_audio
+        else:
+            text = render_html_to_text(
+                self._current_card.question_html,
+                media_dir=media_dir,
+            )
+            audio_files = self._current_card.question_audio
+
+        play_audio_by_index(
+            text=text,
+            audio_files=audio_files,
+            media_dir=media_dir,
+            index=index,
+            on_error=lambda msg: self.notify(msg, severity="warning"),
+        )
+
+    async def action_play_audio_1(self) -> None:
+        """Play audio file 1 (key 5)."""
+        self._play_indexed_audio(1)
+
+    async def action_play_audio_2(self) -> None:
+        """Play audio file 2 (key 6)."""
+        self._play_indexed_audio(2)
+
+    async def action_play_audio_3(self) -> None:
+        """Play audio file 3 (key 7)."""
+        self._play_indexed_audio(3)
+
+    async def action_play_audio_4(self) -> None:
+        """Play audio file 4 (key 8)."""
+        self._play_indexed_audio(4)
+
+    async def action_play_audio_5(self) -> None:
+        """Play audio file 5 (key 9)."""
+        self._play_indexed_audio(5)
+
     async def _rate(self, rating: Rating) -> None:
         """Submit a rating for the current card."""
         if self._session is None or self._current_card is None:
@@ -259,13 +396,14 @@ class ReviewScreen(Screen[None]):
                 stats.reviewed -= 1
 
             self._update_stats()
-            self._display_card()
+            self._display_card(play_audio=False)  # Don't auto-play after undo
             self.notify("Undone", severity="information")
         except UndoError as exc:
             self.notify(str(exc), severity="warning")
 
     async def action_back_to_picker(self) -> None:
         """Return to the deck picker."""
+        stop_audio()
         self.app.pop_screen()
 
     async def action_toggle_images(self) -> None:
@@ -294,17 +432,79 @@ class ReviewScreen(Screen[None]):
         card_view = self.query_one("#card-view", CardViewWidget)
         card_view.set_images_enabled(state.images_enabled)
 
-        # Re-display current card to ensure proper rendering with new image setting
-        self._display_card()
+        # Re-display current card (don't re-play audio)
+        self._display_card(play_audio=False)
 
         # Update help text to show new image status
         help_bar = self.query_one("#help-bar", Static)
         help_bar.update(self._get_help_text())
 
         # Persist to config
-        config = Config(images_enabled=state.images_enabled)
+        config = Config(
+            images_enabled=state.images_enabled,
+            audio_enabled=state.audio_enabled,
+            audio_autoplay=state.audio_autoplay,
+        )
         save_config(config)
 
         # Show notification
         status = "enabled" if state.images_enabled else "disabled"
         self.notify(f"Images {status}", severity="information")
+
+    async def action_replay_audio(self) -> None:
+        """Replay audio for the current card side."""
+        state = self.clanki_app.state
+        if not state.audio_enabled:
+            self.notify("Audio is disabled (press 's' to enable)", severity="warning")
+            return
+
+        if not is_audio_playback_available():
+            self.notify(
+                "Audio playback is only supported on macOS",
+                severity="warning",
+            )
+            return
+
+        self._play_current_side_audio()
+
+    async def action_toggle_audio(self) -> None:
+        """Toggle audio playback on/off and persist to config."""
+        import clanki.audio as audio_module
+
+        state = self.clanki_app.state
+
+        # Reset the cache to ensure fresh detection
+        audio_module.reset_audio_cache()
+
+        # If trying to enable audio, check if it's available
+        if not state.audio_enabled and not is_audio_playback_available():
+            self.notify(
+                "Audio playback is only supported on macOS",
+                title="Audio not available",
+                severity="warning",
+                timeout=5,
+            )
+            return
+
+        # Toggle the state
+        state.audio_enabled = not state.audio_enabled
+
+        # Stop any playing audio when disabling
+        if not state.audio_enabled:
+            stop_audio()
+
+        # Update help text to show new audio status
+        help_bar = self.query_one("#help-bar", Static)
+        help_bar.update(self._get_help_text())
+
+        # Persist to config
+        config = Config(
+            images_enabled=state.images_enabled,
+            audio_enabled=state.audio_enabled,
+            audio_autoplay=state.audio_autoplay,
+        )
+        save_config(config)
+
+        # Show notification
+        status = "enabled" if state.audio_enabled else "disabled"
+        self.notify(f"Audio {status}", severity="information")
