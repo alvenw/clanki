@@ -194,10 +194,25 @@ class DeckPickerScreen(Screen[str]):
             self.notify(f"No cards due in {deck.name}", severity="warning")
             return
 
+        # Resolve canonical deck name from ID
+        # deck_due_tree().name may be decorated for display, but ReviewSession
+        # needs the canonical name that matches col.decks.all_names_and_ids()
+        col = self.clanki_app.state.col
+        if col is None:
+            self.notify("Collection not open", severity="error")
+            return
+
+        deck_dict = col.decks.get(deck.deck_id)
+        if deck_dict is None:
+            self.notify(f"Deck not found: {deck.name}", severity="error")
+            return
+
+        canonical_name = deck_dict["name"]
+
         # Reset session stats
         self.clanki_app.state.stats.reset()
 
         # Push review screen
         from .review import ReviewScreen
 
-        await self.app.push_screen(ReviewScreen(deck.name))
+        await self.app.push_screen(ReviewScreen(canonical_name))
