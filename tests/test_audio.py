@@ -284,6 +284,8 @@ class TestPlayAudioFiles:
             result = play_audio_files([missing_file])
             # Returns True because no error, just nothing to play
             assert result is True
+            # Verify subprocess was never called for missing file
+            mock_popen.assert_not_called()
 
         reset_audio_cache()
 

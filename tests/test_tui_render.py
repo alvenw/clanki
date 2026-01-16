@@ -266,8 +266,17 @@ class TestRenderContentWithImages:
         text = "Before [image: test.jpg] after"
         with patch("clanki.tui.render._check_chafa_available", return_value=True):
             result = render_content_with_images(text, None, images_enabled=True)
-            # Without media_dir, falls back to placeholder
-            assert len(result) >= 1
+            # Without media_dir, should produce 3 items: text before, placeholder, text after
+            assert len(result) == 3
+            assert isinstance(result[0], Text)
+            assert isinstance(result[1], Text)
+            assert isinstance(result[2], Text)
+            # First should be "Before "
+            assert str(result[0]) == "Before "
+            # Second should be the placeholder
+            assert str(result[1]) == "[image: test.jpg]"
+            # Third should be " after"
+            assert str(result[2]) == " after"
 
         reset_cache()
 
@@ -278,12 +287,11 @@ class TestRenderContentWithImages:
         text = "[image: nonexistent.jpg]"
         with patch("clanki.tui.render._check_chafa_available", return_value=True):
             result = render_content_with_images(text, tmp_path, images_enabled=True)
-            # Should fall back to placeholder text
-            found_placeholder = False
-            for item in result:
-                if isinstance(item, Text) and "nonexistent.jpg" in str(item):
-                    found_placeholder = True
-            assert found_placeholder
+            # Should return exactly one item: the placeholder text
+            assert len(result) == 1
+            assert isinstance(result[0], Text)
+            # Placeholder should be exactly preserved
+            assert str(result[0]) == "[image: nonexistent.jpg]"
 
         reset_cache()
 
@@ -294,11 +302,14 @@ class TestRenderContentWithImages:
         text = "Before text [image: test.jpg]"
         with patch("clanki.tui.render._check_chafa_available", return_value=True):
             result = render_content_with_images(text, tmp_path, images_enabled=True)
-            # First item should be the text before
-            assert len(result) >= 1
-            text_items = [r for r in result if isinstance(r, Text)]
-            combined = "".join(str(t) for t in text_items)
-            assert "Before text" in combined
+            # Should have 2 items: text before and the placeholder
+            assert len(result) == 2
+            assert isinstance(result[0], Text)
+            assert isinstance(result[1], Text)
+            # First item should be exactly "Before text "
+            assert str(result[0]) == "Before text "
+            # Second item should be the placeholder
+            assert str(result[1]) == "[image: test.jpg]"
 
         reset_cache()
 
@@ -309,9 +320,14 @@ class TestRenderContentWithImages:
         text = "[image: test.jpg] After text"
         with patch("clanki.tui.render._check_chafa_available", return_value=True):
             result = render_content_with_images(text, tmp_path, images_enabled=True)
-            text_items = [r for r in result if isinstance(r, Text)]
-            combined = "".join(str(t) for t in text_items)
-            assert "After text" in combined
+            # Should have 2 items: placeholder and text after
+            assert len(result) == 2
+            assert isinstance(result[0], Text)
+            assert isinstance(result[1], Text)
+            # First item should be the placeholder
+            assert str(result[0]) == "[image: test.jpg]"
+            # Second item should be exactly " After text"
+            assert str(result[1]) == " After text"
 
         reset_cache()
 
@@ -322,14 +338,19 @@ class TestRenderContentWithImages:
         text = "One [image: a.jpg] two [image: b.jpg] three"
         with patch("clanki.tui.render._check_chafa_available", return_value=True):
             result = render_content_with_images(text, tmp_path, images_enabled=True)
-            # Should have at least one item
-            assert len(result) >= 1
-            # All content should be preserved in some form
-            text_items = [r for r in result if isinstance(r, Text)]
-            combined = "".join(str(t) for t in text_items)
-            # Check key content is present
-            assert "One" in combined or "a.jpg" in combined
-            assert "three" in combined or "b.jpg" in combined
+            # Should have 5 items: text, placeholder, text, placeholder, text
+            assert len(result) == 5
+            # Verify each item type and content
+            assert isinstance(result[0], Text)
+            assert str(result[0]) == "One "
+            assert isinstance(result[1], Text)
+            assert str(result[1]) == "[image: a.jpg]"
+            assert isinstance(result[2], Text)
+            assert str(result[2]) == " two "
+            assert isinstance(result[3], Text)
+            assert str(result[3]) == "[image: b.jpg]"
+            assert isinstance(result[4], Text)
+            assert str(result[4]) == " three"
 
         reset_cache()
 
