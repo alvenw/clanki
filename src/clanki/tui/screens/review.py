@@ -119,11 +119,16 @@ class ReviewScreen(Screen[None]):
         if state.audio_enabled and self._current_side_has_audio():
             replay_hint = "[dim]a[/dim] replay  "
 
+        # Check if undo is available
+        undo_hint = ""
+        if self._session is not None and self._session.can_undo:
+            undo_hint = "[dim]u[/dim] undo  "
+
         if not self._answer_revealed:
             # Question side: Show Answer prompt
             return (
                 "[bold reverse] Show Answer [/bold reverse] [dim](Space/Enter)[/dim]  "
-                f"{replay_hint}"
+                f"{undo_hint}{replay_hint}"
                 f"[dim]s[/dim] snd:{snd_status}  [dim]i[/dim] img:{img_status}  "
                 "[dim]Esc[/dim] back"
             )
@@ -140,14 +145,14 @@ class ReviewScreen(Screen[None]):
                 f"[bold yellow]2[/bold yellow] Hard [dim]{hard}[/dim]  "
                 f"[bold green]3[/bold green] Good [dim]{good}[/dim]  "
                 f"[bold blue]4[/bold blue] Easy [dim]{easy}[/dim]  "
-                f"[dim]u[/dim] undo  {replay_hint}"
+                f"{undo_hint}{replay_hint}"
             )
         return (
             "[bold red]1[/bold red] Again  "
             "[bold yellow]2[/bold yellow] Hard  "
             "[bold green]3[/bold green] Good  "
             "[bold blue]4[/bold blue] Easy  "
-            f"[dim]u[/dim] undo  {replay_hint}"
+            f"{undo_hint}{replay_hint}"
         )
 
     async def on_mount(self) -> None:
@@ -427,7 +432,7 @@ class ReviewScreen(Screen[None]):
 
         try:
             self._current_card = self._session.undo()
-            self._answer_revealed = True  # Show answer after undo
+            self._answer_revealed = False  # Show front side after undo
 
             # Update stats (decrement reviewed count)
             stats = self.clanki_app.state.stats

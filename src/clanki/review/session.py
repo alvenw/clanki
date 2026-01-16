@@ -144,6 +144,15 @@ class ReviewSession:
         """Get the current deck name."""
         return self._deck_name
 
+    @property
+    def can_undo(self) -> bool:
+        """Check if undo is available.
+
+        Returns:
+            True if there is a previous answer to undo.
+        """
+        return self._last_answered_card_id is not None
+
     def get_counts(self) -> DeckCounts:
         """Get due counts for the current deck.
 
