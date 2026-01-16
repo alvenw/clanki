@@ -1,4 +1,4 @@
-"""Stats bar widget for displaying deck and session statistics."""
+"""Stats bar widgets for displaying deck and session statistics."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from textual.widgets import Static
 
 
 class StatsBar(Static):
-    """Widget displaying current deck counts and session progress."""
+    """Widget displaying session progress (due/reviewed) at the top."""
 
     DEFAULT_CSS = """
     StatsBar {
@@ -18,16 +18,12 @@ class StatsBar(Static):
 
     def __init__(self, id: str | None = None) -> None:
         super().__init__(id=id)
-        self._new = 0
-        self._learn = 0
-        self._review = 0
+        self._due = 0
         self._reviewed = 0
 
     def update_counts(self, new: int, learn: int, review: int) -> None:
-        """Update the deck due counts."""
-        self._new = new
-        self._learn = learn
-        self._review = review
+        """Update the deck due counts (calculates total due)."""
+        self._due = new + learn + review
         self._refresh_display()
 
     def update_session(self, reviewed: int) -> None:
@@ -37,13 +33,38 @@ class StatsBar(Static):
 
     def _refresh_display(self) -> None:
         """Refresh the displayed statistics."""
-        total_due = self._new + self._learn + self._review
+        text = f"Due: {self._due}  Reviewed: {self._reviewed}"
+        self.update(text)
+
+
+class DeckCountsBar(Static):
+    """Widget displaying deck counts (new/learn/review) at the bottom."""
+
+    DEFAULT_CSS = """
+    DeckCountsBar {
+        height: 1;
+        text-align: center;
+    }
+    """
+
+    def __init__(self, id: str | None = None) -> None:
+        super().__init__(id=id)
+        self._new = 0
+        self._learn = 0
+        self._review = 0
+
+    def update_counts(self, new: int, learn: int, review: int) -> None:
+        """Update the deck due counts."""
+        self._new = new
+        self._learn = learn
+        self._review = review
+        self._refresh_display()
+
+    def _refresh_display(self) -> None:
+        """Refresh the displayed statistics."""
         text = (
-            f"[bold blue]{self._new}[/bold blue] new  "
-            f"[bold red]{self._learn}[/bold red] learning  "
-            f"[bold green]{self._review}[/bold green] review  "
-            f"[dim]|[/dim]  "
-            f"Due: {total_due}  "
-            f"Reviewed: {self._reviewed}"
+            f"[bold blue]{self._new}[/bold blue] New  "
+            f"[bold red]{self._learn}[/bold red] Learn  "
+            f"[bold green]{self._review}[/bold green] Review"
         )
         self.update(text)

@@ -28,7 +28,7 @@ from ...render import render_html_to_text
 from ...review import CardView, DeckNotFoundError, Rating, ReviewSession, UndoError
 from ..render import is_image_support_available
 from ..widgets.card_view import CardViewWidget
-from ..widgets.stats_bar import StatsBar
+from ..widgets.stats_bar import DeckCountsBar, StatsBar
 
 if TYPE_CHECKING:
     from ..app import ClankiApp
@@ -79,8 +79,10 @@ class ReviewScreen(Screen[None]):
         images_enabled = self.clanki_app.state.images_enabled
 
         yield Vertical(
+            # Top section: deck title and session stats
             Static(f"[bold]{self._deck_name}[/bold]", id="deck-title", markup=True),
             StatsBar(id="stats-bar"),
+            # Middle section: card content
             VerticalScroll(
                 CardViewWidget(
                     id="card-view",
@@ -88,6 +90,8 @@ class ReviewScreen(Screen[None]):
                     images_enabled=images_enabled,
                 ),
             ),
+            # Bottom section: deck counts, then help/action bar
+            DeckCountsBar(id="deck-counts-bar"),
             Static(
                 self._get_help_text(),
                 id="help-bar",
@@ -96,22 +100,54 @@ class ReviewScreen(Screen[None]):
             ),
         )
 
+    def _current_side_has_audio(self) -> bool:
+        """Check if the current side (question or answer) has audio files."""
+        if self._current_card is None:
+            return False
+        if self._answer_revealed:
+            return bool(self._current_card.answer_audio)
+        return bool(self._current_card.question_audio)
+
     def _get_help_text(self) -> str:
-        """Get context-appropriate help text."""
+        """Get context-appropriate help text with action prompts."""
         state = self.clanki_app.state
         img_status = "on" if state.images_enabled else "off"
         snd_status = "on" if state.audio_enabled else "off"
+
+        # Only show replay hint if current side has audio and audio is enabled
+        replay_hint = ""
+        if state.audio_enabled and self._current_side_has_audio():
+            replay_hint = "[dim]a[/dim] replay  "
+
         if not self._answer_revealed:
+            # Question side: Show Answer prompt
             return (
-                f"[dim]Space[/dim] reveal  [dim]a[/dim] replay  "
+                "[bold reverse] Show Answer [/bold reverse] [dim](Space/Enter)[/dim]  "
+                f"{replay_hint}"
                 f"[dim]s[/dim] snd:{snd_status}  [dim]i[/dim] img:{img_status}  "
                 "[dim]Esc[/dim] back"
             )
+        # Answer side: Rating bar with timestamps
+        labels = (
+            self._current_card.rating_labels
+            if self._current_card is not None and len(self._current_card.rating_labels) == 4
+            else None
+        )
+        if labels:
+            again, hard, good, easy = labels
+            return (
+                f"[bold red]1[/bold red] Again [dim]{again}[/dim]  "
+                f"[bold yellow]2[/bold yellow] Hard [dim]{hard}[/dim]  "
+                f"[bold green]3[/bold green] Good [dim]{good}[/dim]  "
+                f"[bold blue]4[/bold blue] Easy [dim]{easy}[/dim]  "
+                f"[dim]u[/dim] undo  {replay_hint}"
+            )
         return (
-            "[dim]1[/dim] Again  [dim]2[/dim] Hard  "
-            "[dim]3/Space[/dim] Good  [dim]4[/dim] Easy  "
-            f"[dim]u[/dim] undo  [dim]a[/dim] replay  "
-            f"[dim]s[/dim] snd:{snd_status}  [dim]i[/dim] img:{img_status}"
+            "[bold red]1[/bold red] Again  "
+            "[bold yellow]2[/bold yellow] Hard  "
+            "[bold green]3[/bold green] Good  "
+            "[bold blue]4[/bold blue] Easy  "
+            f"[dim]u[/dim] undo  {replay_hint}"
         )
 
     async def on_mount(self) -> None:
@@ -137,20 +173,29 @@ class ReviewScreen(Screen[None]):
         stop_audio()
 
     def _update_stats(self) -> None:
-        """Update the stats bar with current deck counts."""
+        """Update all stats displays with current counts."""
         if self._session is None:
             return
 
         counts = self._session.get_counts()
+
+        # Update top stats bar (session summary: due/reviewed)
         stats_bar = self.query_one("#stats-bar", StatsBar)
         stats_bar.update_counts(
             new=counts.new_count,
             learn=counts.learn_count,
             review=counts.review_count,
         )
-
         session_stats = self.clanki_app.state.stats
         stats_bar.update_session(reviewed=session_stats.reviewed)
+
+        # Update bottom deck counts bar (new/learn/review)
+        deck_counts_bar = self.query_one("#deck-counts-bar", DeckCountsBar)
+        deck_counts_bar.update_counts(
+            new=counts.new_count,
+            learn=counts.learn_count,
+            review=counts.review_count,
+        )
 
     async def _load_next_card(self) -> None:
         """Load the next card or show done screen."""
@@ -189,7 +234,7 @@ class ReviewScreen(Screen[None]):
         else:
             card_view.show_question(self._current_card.question_html)
 
-        # Update help text
+        # Update help text (includes Show Answer prompt or Rating bar)
         help_bar = self.query_one("#help-bar", Static)
         help_bar.update(self._get_help_text())
 

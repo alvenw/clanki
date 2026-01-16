@@ -131,8 +131,11 @@ class ClankiApp(App[None]):
         dock: bottom;
         height: 1;
         background: $surface-darken-1;
-        color: $text-muted;
         text-align: center;
+    }
+
+    DeckCountsBar {
+        dock: bottom;
     }
     """
 

@@ -258,9 +258,9 @@ def _cmd_review(args: argparse.Namespace) -> int:
                 if audio_autoplay:
                     play_audio(question, card.question_audio)
 
-                # Get prompt text (includes audio replay option if available)
+                # Get prompt text (includes audio replay option if audio present)
                 reveal_prompt = "Press Enter to show answer"
-                if audio_enabled:
+                if audio_enabled and card.question_audio:
                     reveal_prompt += " (a=replay audio)"
                 reveal_prompt += "..."
 
@@ -288,9 +288,17 @@ def _cmd_review(args: argparse.Namespace) -> int:
                 if audio_autoplay:
                     play_audio(answer, card.answer_audio)
 
-                # Get rating prompt (includes audio replay option)
-                rating_prompt = "Rate: (1) Again  (2) Hard  (3) Good  (4) Easy  (u) Undo"
-                if audio_enabled:
+                # Get rating prompt with interval labels if available
+                labels = card.rating_labels if len(card.rating_labels) == 4 else None
+                if labels:
+                    again, hard, good, easy = labels
+                    rating_prompt = (
+                        f"Rate: (1) Again {again}  (2) Hard {hard}  "
+                        f"(3) Good {good}  (4) Easy {easy}  (u) Undo"
+                    )
+                else:
+                    rating_prompt = "Rate: (1) Again  (2) Hard  (3) Good  (4) Easy  (u) Undo"
+                if audio_enabled and card.answer_audio:
                     rating_prompt += "  (a) Replay"
                 rating_prompt += "  (q) Quit"
                 print(rating_prompt)
@@ -323,6 +331,19 @@ def _cmd_review(args: argparse.Namespace) -> int:
                             answer_display = substitute_audio_icons(answer)
                             print(f"\nQuestion:\n{question_display}\n")
                             print(f"Answer:\n{answer_display}\n")
+                            # Rebuild rating prompt with new card's labels
+                            labels = card.rating_labels if len(card.rating_labels) == 4 else None
+                            if labels:
+                                again, hard, good, easy = labels
+                                rating_prompt = (
+                                    f"Rate: (1) Again {again}  (2) Hard {hard}  "
+                                    f"(3) Good {good}  (4) Easy {easy}  (u) Undo"
+                                )
+                            else:
+                                rating_prompt = "Rate: (1) Again  (2) Hard  (3) Good  (4) Easy  (u) Undo"
+                            if audio_enabled and card.answer_audio:
+                                rating_prompt += "  (a) Replay"
+                            rating_prompt += "  (q) Quit"
                             print(rating_prompt)
                             continue
                         except Exception as exc:

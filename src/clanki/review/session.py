@@ -82,6 +82,7 @@ class CardView:
     states: Any  # SchedulingStates protobuf
     question_audio: list[str] = field(default_factory=list)  # Audio filenames for question
     answer_audio: list[str] = field(default_factory=list)  # Audio filenames for answer
+    rating_labels: list[str] = field(default_factory=list)  # GUI-style interval labels (again, hard, good, easy)
 
 
 class ReviewSession:
@@ -200,6 +201,9 @@ class ReviewSession:
         # Render the card
         render_output = card.render_output()
 
+        # Get GUI-style interval labels (again, hard, good, easy)
+        rating_labels = list(self._col.sched.describe_next_states(queued_card.states))
+
         # Create CardView
         card_view = CardView(
             card_id=card.id,
@@ -209,6 +213,7 @@ class ReviewSession:
             states=queued_card.states,
             question_audio=_extract_audio_filenames(render_output.question_av_tags),
             answer_audio=_extract_audio_filenames(render_output.answer_av_tags),
+            rating_labels=rating_labels,
         )
 
         self._current_card = card_view
@@ -305,6 +310,9 @@ class ReviewSession:
         # Render the card
         render_output = card.render_output()
 
+        # Get GUI-style interval labels (again, hard, good, easy)
+        rating_labels = list(self._col.sched.describe_next_states(queued_card.states))
+
         card_view = CardView(
             card_id=card.id,
             question_html=render_output.question_text,
@@ -313,6 +321,7 @@ class ReviewSession:
             states=queued_card.states,
             question_audio=_extract_audio_filenames(render_output.question_av_tags),
             answer_audio=_extract_audio_filenames(render_output.answer_av_tags),
+            rating_labels=rating_labels,
         )
 
         self._current_card = card_view
