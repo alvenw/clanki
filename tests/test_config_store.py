@@ -25,24 +25,35 @@ class TestConfig:
         assert config.images_enabled is True
         assert config.audio_enabled is True
         assert config.audio_autoplay is True
+        assert config.expanded_decks == set()
 
     def test_to_dict(self):
         """Config should serialize to dict."""
-        config = Config(images_enabled=False, audio_enabled=False, audio_autoplay=False)
+        config = Config(
+            images_enabled=False,
+            audio_enabled=False,
+            audio_autoplay=False,
+            expanded_decks={1, 2, 3},
+        )
         data = config.to_dict()
-        assert data == {
-            "images_enabled": False,
-            "audio_enabled": False,
-            "audio_autoplay": False,
-        }
+        assert data["images_enabled"] is False
+        assert data["audio_enabled"] is False
+        assert data["audio_autoplay"] is False
+        assert set(data["expanded_decks"]) == {1, 2, 3}
 
     def test_from_dict(self):
         """Config should deserialize from dict."""
-        data = {"images_enabled": False, "audio_enabled": False, "audio_autoplay": False}
+        data = {
+            "images_enabled": False,
+            "audio_enabled": False,
+            "audio_autoplay": False,
+            "expanded_decks": [1, 2, 3],
+        }
         config = Config.from_dict(data)
         assert config.images_enabled is False
         assert config.audio_enabled is False
         assert config.audio_autoplay is False
+        assert config.expanded_decks == {1, 2, 3}
 
     def test_from_dict_missing_key(self):
         """Config should use defaults for missing keys."""
@@ -51,6 +62,7 @@ class TestConfig:
         assert config.images_enabled is True
         assert config.audio_enabled is True
         assert config.audio_autoplay is True
+        assert config.expanded_decks == set()
 
     def test_from_dict_extra_keys(self):
         """Config should ignore extra keys."""
@@ -60,6 +72,14 @@ class TestConfig:
         # Audio settings should still be defaults
         assert config.audio_enabled is True
         assert config.audio_autoplay is True
+        assert config.expanded_decks == set()
+
+    def test_expanded_decks_roundtrip(self):
+        """expanded_decks should survive serialization roundtrip."""
+        original = Config(expanded_decks={100, 200, 300})
+        data = original.to_dict()
+        restored = Config.from_dict(data)
+        assert restored.expanded_decks == {100, 200, 300}
 
 
 class TestConfigDir:
