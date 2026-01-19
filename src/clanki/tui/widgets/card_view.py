@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
@@ -81,25 +82,28 @@ class CardViewWidget(Static):
         self._refresh_content()
 
     def _get_max_image_size(self) -> tuple[int | None, int | None]:
-        """Calculate maximum image size based on available viewport.
+        """Calculate maximum image size based on available content region.
 
         Returns:
             Tuple of (max_width, max_height) in terminal cells.
         """
         try:
-            # Get container size, accounting for padding and borders
-            # Widget padding: 1 2 (top/bottom, left/right) = 4 horizontal, 2 vertical
-            # Section border: 1 each side = 2 horizontal, 2 vertical
-            # Section padding: 1 2 = 4 horizontal, 2 vertical
-            container_width = self.size.width - 12  # Total horizontal padding/borders
-            container_height = self.size.height - 8  # Vertical space minus chrome
+            # content_region accounts for widget's own padding (1 2)
+            region = self.content_region
 
-            return (
-                max(10, container_width) if container_width > 0 else None,
-                max(5, container_height) if container_height > 0 else None,
-            )
+            # If size isn't known yet (pre-layout), let chafa decide
+            if region.width <= 0 or region.height <= 0:
+                return (None, None)
+
+            # Subtract card-section chrome: border (1 each side) + padding (2h/1v each side)
+            width = region.width - 6
+            height = region.height - 4
+
+            if width <= 0 or height <= 0:
+                return (None, None)
+
+            return (max(10, width), max(5, height))
         except Exception:
-            # If we can't determine size, let term-image decide
             return (None, None)
 
     def _render_section_content(
@@ -174,3 +178,8 @@ class CardViewWidget(Static):
                 container.mount(Static(html, classes="content"))
             except Exception as fallback_exc:
                 logger.error("Fallback mounting also failed: %s", fallback_exc)
+
+    def on_resize(self, event: events.Resize) -> None:
+        """Re-render content when widget is resized to fix image scaling."""
+        if self._images_enabled and (self._question_html or self._answer_html):
+            self._refresh_content()
