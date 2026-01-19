@@ -60,6 +60,7 @@ class AppState:
     images_enabled: bool = True
     audio_enabled: bool = True
     audio_autoplay: bool = True
+    expanded_decks: set[int] = field(default_factory=set)
 
 
 class ClankiApp(App[None]):
@@ -162,11 +163,18 @@ class ClankiApp(App[None]):
         """
         super().__init__()
         self._collection_path = collection_path
+
+        # Load expanded_decks from persistent config
+        from ..config_store import load_config
+
+        config = load_config()
+
         self._state = AppState(
             initial_deck=initial_deck,
             images_enabled=images_enabled,
             audio_enabled=audio_enabled,
             audio_autoplay=audio_autoplay,
+            expanded_decks=config.expanded_decks.copy(),
         )
 
     @property
@@ -212,8 +220,17 @@ class ClankiApp(App[None]):
             self._state.col = None
 
     def on_unmount(self) -> None:
-        """Ensure collection is closed on unmount."""
+        """Ensure collection is closed and config is saved on unmount."""
         self._close_collection()
+        self._save_config()
+
+    def _save_config(self) -> None:
+        """Save expanded_decks state to persistent config."""
+        from ..config_store import load_config, save_config
+
+        config = load_config()
+        config.expanded_decks = self._state.expanded_decks.copy()
+        save_config(config)
 
 
 def run_tui(

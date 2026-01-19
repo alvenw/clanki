@@ -49,6 +49,7 @@ class Config:
     images_enabled: bool = True
     audio_enabled: bool = True
     audio_autoplay: bool = True
+    expanded_decks: set[int] = field(default_factory=set)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary for serialization."""
@@ -56,15 +57,18 @@ class Config:
             "images_enabled": self.images_enabled,
             "audio_enabled": self.audio_enabled,
             "audio_autoplay": self.audio_autoplay,
+            "expanded_decks": list(self.expanded_decks),
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Config":
         """Create config from dictionary."""
+        expanded = data.get("expanded_decks", [])
         return cls(
             images_enabled=data.get("images_enabled", True),
             audio_enabled=data.get("audio_enabled", True),
             audio_autoplay=data.get("audio_autoplay", True),
+            expanded_decks=set(expanded) if isinstance(expanded, list) else set(),
         )
 
 
