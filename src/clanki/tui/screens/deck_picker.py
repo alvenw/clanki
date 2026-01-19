@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Container, Vertical
 from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import Input, ListItem, ListView, Static
@@ -140,16 +140,22 @@ class DeckPickerScreen(Screen[str]):
         return self.app
 
     def compose(self) -> ComposeResult:
-        yield Vertical(
-            AsciiLogo(id="logo"),
-            Input(placeholder="Filter decks...", id="filter-input"),
-            ListView(id="deck-list"),
-            Static(
-                "[dim]j/k[/dim] navigate  [dim]Space[/dim] expand/collapse  "
-                "[dim]Enter[/dim] select  [dim]q[/dim] quit",
-                classes="help-text",
-                markup=True,
+        # Footer - full width, docked to bottom
+        yield Static(
+            "[dim]j/k[/dim] navigate  [dim]Space[/dim] expand/collapse  "
+            "[dim]Enter[/dim] select  [dim]q[/dim] quit",
+            classes="help-text footer-bar",
+            markup=True,
+        )
+        # Main content - centered with max-width
+        yield Container(
+            Vertical(
+                AsciiLogo(id="logo"),
+                Input(placeholder="Filter decks...", id="filter-input"),
+                ListView(id="deck-list"),
+                classes="content-column",
             ),
+            classes="centered-screen",
         )
 
     async def on_mount(self) -> None:

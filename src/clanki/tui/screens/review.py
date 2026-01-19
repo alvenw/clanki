@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Container, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Static
 
@@ -78,26 +78,35 @@ class ReviewScreen(Screen[None]):
         media_dir = self.clanki_app.state.media_dir
         images_enabled = self.clanki_app.state.images_enabled
 
-        yield Vertical(
-            # Top section: deck title and session stats
-            Static(f"[bold]{self._deck_name}[/bold]", id="deck-title", markup=True),
-            StatsBar(id="stats-bar"),
-            # Middle section: card content
-            VerticalScroll(
-                CardViewWidget(
-                    id="card-view",
-                    media_dir=media_dir,
-                    images_enabled=images_enabled,
+        # Footer - full width, docked to bottom
+        yield Static(
+            self._get_help_text(),
+            id="help-bar",
+            classes="help-text footer-bar",
+            markup=True,
+        )
+        # Main content - centered with max-width
+        yield Container(
+            Vertical(
+                Static(
+                    f"[bold]{self._deck_name}[/bold]",
+                    id="deck-title",
+                    markup=True,
                 ),
+                StatsBar(id="stats-bar"),
+                Container(
+                    CardViewWidget(
+                        id="card-view",
+                        media_dir=media_dir,
+                        images_enabled=images_enabled,
+                    ),
+                    id="card-scroll",
+                    classes="card-container",
+                ),
+                DeckCountsBar(id="deck-counts-bar"),
+                classes="content-column",
             ),
-            # Bottom section: deck counts, then help/action bar
-            DeckCountsBar(id="deck-counts-bar"),
-            Static(
-                self._get_help_text(),
-                id="help-bar",
-                classes="help-text",
-                markup=True,
-            ),
+            classes="centered-screen",
         )
 
     def _current_side_has_audio(self) -> bool:

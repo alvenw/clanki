@@ -63,10 +63,15 @@ def resolve_anki_base(override: str | Path | None = None) -> Path:
     return base
 
 
+# Special Anki folders that should not be treated as profiles
+_EXCLUDED_FOLDERS = {"addons21", "logs", "crash.log", "prefs21.db"}
+
+
 def list_profiles(anki_base: Path | None = None) -> list[str]:
     """List all available Anki profiles.
 
-    Profiles are detected by scanning subdirectories for collection.anki2 files.
+    Profiles are detected by scanning subdirectories for collection.anki2 files,
+    excluding special Anki folders (addons21, logs, etc.).
 
     Args:
         anki_base: Optional explicit Anki base directory.
@@ -78,7 +83,7 @@ def list_profiles(anki_base: Path | None = None) -> list[str]:
     profiles = []
 
     for entry in base.iterdir():
-        if entry.is_dir():
+        if entry.is_dir() and entry.name not in _EXCLUDED_FOLDERS:
             collection_path = entry / "collection.anki2"
             if collection_path.exists():
                 profiles.append(entry.name)

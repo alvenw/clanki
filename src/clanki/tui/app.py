@@ -72,40 +72,63 @@ class ClankiApp(App[None]):
         background: $surface;
     }
 
+    /* Footer bar - full width, docked to bottom */
+    .footer-bar {
+        dock: bottom;
+        width: 100%;
+    }
+
+    /* Centered layout - outer container centers the inner column */
+    .centered-screen {
+        width: 100%;
+        height: 1fr;
+        align-horizontal: center;
+    }
+
+    /* Inner content column with max-width */
+    .content-column {
+        max-width: 96;
+        width: 100%;
+        height: 100%;
+    }
+
     #deck-list {
         height: 1fr;
         border: solid $primary;
     }
 
     #filter-input {
-        dock: top;
         margin: 1 0;
+    }
+
+    /* Card container - fills space and centers content vertically */
+    .card-container {
+        height: 1fr;
+        align: center middle;
     }
 
     .card-content {
         padding: 1 2;
-        height: 1fr;
+        height: auto;
     }
 
     .question-panel {
         border: solid $primary;
-        height: 1fr;
+        height: auto;
     }
 
     .answer-panel {
         border: solid $success;
-        height: 1fr;
+        height: auto;
     }
 
     .stats-bar {
-        dock: bottom;
         height: 3;
         background: $surface-darken-1;
         padding: 0 1;
     }
 
     .rating-bar {
-        dock: bottom;
         height: 3;
         background: $surface-darken-2;
         layout: horizontal;
@@ -129,14 +152,13 @@ class ClankiApp(App[None]):
     }
 
     .help-text {
-        dock: bottom;
         height: 1;
         background: $surface-darken-1;
         text-align: center;
     }
 
     DeckCountsBar {
-        dock: bottom;
+        height: auto;
     }
     """
 

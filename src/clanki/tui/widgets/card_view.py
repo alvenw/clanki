@@ -21,7 +21,9 @@ class CardViewWidget(Static):
 
     DEFAULT_CSS = """
     CardViewWidget {
-        height: 1fr;
+        height: auto;
+        width: 100%;
+        max-width: 96;
         padding: 1 2;
     }
 
