@@ -171,6 +171,17 @@ class DeckPickerScreen(Screen[str]):
 
             list_view.call_after_refresh(init_highlight)
 
+    def on_screen_resume(self) -> None:
+        """Refresh deck data when screen becomes active again after another screen is popped."""
+        # Reload decks to get updated counts after review
+        self._load_decks()
+        self._update_list()
+        self.call_after_refresh(self._update_list_height)
+
+        # Re-focus the list
+        list_view = self.query_one("#deck-list", ListView)
+        list_view.focus()
+
     def on_resize(self) -> None:
         """Handle terminal resize."""
         self.call_after_refresh(self._update_list_height)

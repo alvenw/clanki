@@ -12,7 +12,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Center, Vertical
 from textual.screen import Screen
-from textual.widgets import Button, Static
+from textual.widgets import Static
 
 if TYPE_CHECKING:
     from ..app import ClankiApp
@@ -60,23 +60,19 @@ class DoneScreen(Screen[None]):
                 Static(f"  Good  (3): {stats.good_count}"),
                 Static(f"  Easy  (4): {stats.easy_count}"),
                 Static(""),
-                Button("Back to Decks", id="back-button", variant="primary"),
+                Static(
+                    "[dim]Esc[/dim] Back to Decks  [dim]q[/dim] Quit",
+                    markup=True,
+                ),
                 classes="done-stats",
             ),
             classes="done-container",
         )
 
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button press."""
-        if event.button.id == "back-button":
-            await self.action_back_to_picker()
-
     async def action_back_to_picker(self) -> None:
         """Return to the deck picker."""
-        from .deck_picker import DeckPickerScreen
-
         # Reset stats for next session
         self.clanki_app.state.stats.reset()
 
-        # Switch to deck picker (replace done screen)
-        await self.app.switch_screen(DeckPickerScreen())
+        # Pop back to the existing deck picker on the stack
+        self.app.pop_screen()
