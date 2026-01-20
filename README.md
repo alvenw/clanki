@@ -148,6 +148,6 @@ uv venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
 
 pytest                 # Run tests
-mypy src/clanki        # Type checking
+mypy clanki        # Type checking
 ruff check .           # Linting
 ```

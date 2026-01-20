@@ -47,10 +47,10 @@ Issues = "https://github.com/aaalvn/clanki/issues"
 clanki = "clanki.cli:main"
 
 [tool.hatch.version]
-path = "src/clanki/__init__.py"
+path = "clanki/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/clanki"]
+packages = ["clanki"]
 
 [tool.ruff]
 line-length = 100
