@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 
 from textual import events
-from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
@@ -16,7 +15,7 @@ from ..render import render_styled_content_with_images
 logger = logging.getLogger(__name__)
 
 
-class CardViewWidget(Static):
+class CardViewWidget(Vertical):
     """Widget for displaying card content (question and optionally answer)."""
 
     DEFAULT_CSS = """
@@ -49,9 +48,6 @@ class CardViewWidget(Static):
         self._answer_html: str | None = None
         self._media_dir = media_dir
         self._images_enabled = images_enabled
-
-    def compose(self) -> ComposeResult:
-        yield Vertical(id="card-content")
 
     def set_media_dir(self, media_dir: Path | None) -> None:
         """Set the media directory for image loading."""
@@ -143,24 +139,15 @@ class CardViewWidget(Static):
             return [Static(html, classes="content")]
 
     def _refresh_content(self) -> None:
-        """Refresh the widget content.
-
-        Always renders a single card section (Anki-style):
-        - Question state: shows question_html with QUESTION mode (cloze shows [...])
-        - Answer revealed: shows only answer_html with ANSWER mode
-          (answer HTML typically includes front via {{FrontSide}})
-        """
+        """Refresh the widget content."""
         try:
-            container = self.query_one("#card-content", Vertical)
-            container.remove_children()
+            self.remove_children()  # Remove from self, not #card-content
 
             if self._answer_html is not None:
-                # Answer revealed: render answer HTML only
                 content_widgets = self._render_section_content(
                     self._answer_html, mode=RenderMode.ANSWER
                 )
             else:
-                # Question only: render with QUESTION mode for cloze handling
                 content_widgets = self._render_section_content(
                     self._question_html, mode=RenderMode.QUESTION
                 )
@@ -169,15 +156,13 @@ class CardViewWidget(Static):
                 *content_widgets,
                 classes="card-section",
             )
-            container.mount(content_section)
+            self.mount(content_section)  # Mount directly to self
         except Exception as exc:
-            # If mounting fails, try to show plain text fallback
             logger.warning("Card content mounting failed, trying fallback: %s", exc)
             try:
-                container = self.query_one("#card-content", Vertical)
-                container.remove_children()
+                self.remove_children()
                 html = self._answer_html if self._answer_html else self._question_html
-                container.mount(Static(html, classes="content"))
+                self.mount(Static(html, classes="content"))
             except Exception as fallback_exc:
                 logger.error("Fallback mounting also failed: %s", fallback_exc)
 
