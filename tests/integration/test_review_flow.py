@@ -114,6 +114,10 @@ class FakeScheduler:
         )
         return FakeQueuedCards(cards=[queued])
 
+    def describe_next_states(self, states: Any) -> list[str]:
+        """Return fake interval labels for buttons."""
+        return ["<1m", "10m", "1d", "4d"]
+
     def build_answer(self, card: FakeCard, states: Any, rating: Any) -> dict:
         """Build an answer object."""
         return {"card_id": card.id, "rating": rating, "states": states}
@@ -388,7 +392,7 @@ class TestAnswerFlow:
 
         session.answer(Rating.EASY)
 
-        assert session._last_answered_card_id == original_card_id
+        assert original_card_id in session._answered_card_ids
 
 
 class TestUndoFlow:
@@ -434,19 +438,46 @@ class TestUndoFlow:
 
         assert session._current_card is not None
 
-    def test_undo_clears_last_answered_id(self, basic_collection, mock_anki_scheduler):
-        """undo() should clear the last answered card ID."""
+    def test_undo_pops_from_stack(self, basic_collection, mock_anki_scheduler):
+        """undo() should pop the last answered card ID from the stack."""
         from clanki.review.session import Rating, ReviewSession
 
         session = ReviewSession(basic_collection, "Test Deck")
         session.next_card()
         session.answer(Rating.HARD)
 
-        assert session._last_answered_card_id is not None
+        assert len(session._answered_card_ids) == 1
 
         session.undo()
 
-        assert session._last_answered_card_id is None
+        assert len(session._answered_card_ids) == 0
+
+    def test_can_undo_reflects_stack_size(self, basic_collection, mock_anki_scheduler):
+        """can_undo should reflect whether the undo stack has entries."""
+        from clanki.review.session import Rating, ReviewSession
+
+        session = ReviewSession(basic_collection, "Test Deck")
+
+        # Initially no undo available
+        assert session.can_undo is False
+
+        # Answer first card
+        session.next_card()
+        session.answer(Rating.GOOD)
+        assert session.can_undo is True
+
+        # Answer second card
+        session.next_card()
+        session.answer(Rating.HARD)
+        assert session.can_undo is True
+
+        # Undo once - still one card on stack
+        session.undo()
+        assert session.can_undo is True
+
+        # Undo again - stack is empty
+        session.undo()
+        assert session.can_undo is False
 
     def test_undo_handles_queued_card_mismatch(self, mock_anki_scheduler):
         """undo() should handle gracefully when queued card differs from undone card.
@@ -585,18 +616,36 @@ class TestErrorBranches:
         assert "No card to answer" in str(exc_info.value)
         assert "next_card()" in str(exc_info.value)
 
-    def test_double_undo_raises(self, basic_collection, mock_anki_scheduler):
-        """Calling undo() twice without answering should raise."""
+    def test_multi_level_undo(self, basic_collection, mock_anki_scheduler):
+        """Undo should work multiple times in LIFO order."""
         from clanki.review.session import Rating, ReviewSession, UndoError
 
         session = ReviewSession(basic_collection, "Test Deck")
-        session.next_card()
+
+        # Answer 3 cards in sequence
+        card1 = session.next_card()
+        assert card1.card_id == 101
         session.answer(Rating.GOOD)
 
-        # First undo succeeds
-        session.undo()
+        card2 = session.next_card()
+        assert card2.card_id == 102
+        session.answer(Rating.HARD)
 
-        # Second undo should fail (nothing to undo)
+        card3 = session.next_card()
+        assert card3.card_id == 103
+        session.answer(Rating.EASY)
+
+        # Undo 3 times in LIFO order
+        restored3 = session.undo()
+        assert restored3.card_id == 103
+
+        restored2 = session.undo()
+        assert restored2.card_id == 102
+
+        restored1 = session.undo()
+        assert restored1.card_id == 101
+
+        # Fourth undo should fail (nothing left to undo)
         with pytest.raises(UndoError) as exc_info:
             session.undo()
 

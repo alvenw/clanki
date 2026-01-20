@@ -105,7 +105,7 @@ class ReviewSession:
         self._deck_name = deck_name
         self._deck_id: int | None = None
         self._current_card: CardView | None = None
-        self._last_answered_card_id: int | None = None
+        self._answered_card_ids: list[int] = []
 
         # Resolve and select deck
         self._resolve_deck(deck_name)
@@ -151,7 +151,7 @@ class ReviewSession:
         Returns:
             True if there is a previous answer to undo.
         """
-        return self._last_answered_card_id is not None
+        return len(self._answered_card_ids) > 0
 
     def get_counts(self) -> DeckCounts:
         """Get due counts for the current deck.
@@ -268,7 +268,7 @@ class ReviewSession:
         self._col.sched.answer_card(answer)
 
         # Track for undo
-        self._last_answered_card_id = self._current_card.card_id
+        self._answered_card_ids.append(self._current_card.card_id)
         self._current_card = None
 
     def undo(self) -> CardView:
@@ -280,7 +280,7 @@ class ReviewSession:
         Raises:
             UndoError: If there's nothing to undo or undo fails.
         """
-        if self._last_answered_card_id is None:
+        if not self._answered_card_ids:
             raise UndoError("Nothing to undo.")
 
         try:
@@ -290,8 +290,7 @@ class ReviewSession:
             raise UndoError(f"Undo failed: {exc}") from exc
 
         # Re-fetch the card
-        card_id = self._last_answered_card_id
-        self._last_answered_card_id = None
+        card_id = self._answered_card_ids.pop()
 
         try:
             card = self._col.get_card(card_id)

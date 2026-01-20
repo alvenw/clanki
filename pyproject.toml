@@ -64,3 +64,8 @@ python_version = "3.10"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
