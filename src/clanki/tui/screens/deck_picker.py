@@ -16,7 +16,7 @@ from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import Input, ListItem, ListView, Static
 
-from ..widgets import AsciiLogo
+from ... import __version__
 
 if TYPE_CHECKING:
     from ..app import ClankiApp
@@ -150,7 +150,7 @@ class DeckPickerScreen(Screen[str]):
         # Main content - centered with max-width
         yield Container(
             Vertical(
-                AsciiLogo(id="logo"),
+                Static(f"clanki v{__version__}", classes="header-bar"),
                 Input(placeholder="Filter decks...", id="filter-input"),
                 ListView(id="deck-list"),
                 classes="content-column",
@@ -159,11 +159,11 @@ class DeckPickerScreen(Screen[str]):
         )
 
     async def on_mount(self) -> None:
-        """Load decks when screen mounts."""
+        """Load decks and initialize UI when screen mounts."""
         self._load_decks()
         self._update_list()
 
-        # Focus the list and highlight first item after ListView processes children
+        # Focus the list and highlight first item
         list_view = self.query_one("#deck-list", ListView)
         list_view.focus()
 

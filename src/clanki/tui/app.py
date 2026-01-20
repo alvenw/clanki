@@ -162,6 +162,14 @@ class ClankiApp(App[None]):
     DeckCountsBar {
         height: auto;
     }
+
+    /* Header bar with version */
+    .header-bar {
+        height: 1;
+        text-align: center;
+        color: $text-muted;
+        margin-bottom: 1;
+    }
     """
 
     BINDINGS = [
