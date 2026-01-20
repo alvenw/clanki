@@ -159,6 +159,7 @@ class DeckPickerScreen(Screen[str]):
         """Load decks and initialize UI when screen mounts."""
         self._load_decks()
         self._update_list()
+        self.call_after_refresh(self._update_list_height)
 
         # Focus the list and highlight first item
         list_view = self.query_one("#deck-list", ListView)
@@ -169,6 +170,26 @@ class DeckPickerScreen(Screen[str]):
                 list_view.index = 0
 
             list_view.call_after_refresh(init_highlight)
+
+    def on_resize(self) -> None:
+        """Handle terminal resize."""
+        self.call_after_refresh(self._update_list_height)
+
+    def _update_list_height(self) -> None:
+        """Set list height to min(content, available space)."""
+        list_view = self.query_one("#deck-list", ListView)
+        column = self.query_one(".content-column", Vertical)
+        header = self.query_one(".header-bar", Static)
+
+        # Available space inside the column after header
+        available = column.size.height - header.outer_size.height
+
+        # List border adds 2 rows (top + bottom)
+        border_height = 2 if list_view.styles.border else 0
+
+        content_height = len(self._visible_nodes)
+        target = max(1, min(content_height + border_height, available))
+        list_view.styles.height = target
 
     @property
     def _expanded_decks(self) -> set[int]:
@@ -259,20 +280,29 @@ class DeckPickerScreen(Screen[str]):
 
             list_view.call_after_refresh(restore_highlight)
 
+        # Update height after list content changes (after layout runs)
+        self.call_after_refresh(self._update_list_height)
+
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle deck selection from list."""
         if isinstance(event.item, DeckListItem):
             await self._select_deck(event.item.node)
 
     async def action_cursor_down(self) -> None:
-        """Move cursor down in the list."""
+        """Move cursor down in the list, wrapping to top at the end."""
         list_view = self.query_one("#deck-list", ListView)
-        list_view.action_cursor_down()
+        if list_view.index is not None and list_view.index >= len(self._visible_nodes) - 1:
+            list_view.index = 0
+        else:
+            list_view.action_cursor_down()
 
     async def action_cursor_up(self) -> None:
-        """Move cursor up in the list."""
+        """Move cursor up in the list, wrapping to bottom at the start."""
         list_view = self.query_one("#deck-list", ListView)
-        list_view.action_cursor_up()
+        if list_view.index is not None and list_view.index <= 0:
+            list_view.index = len(self._visible_nodes) - 1
+        else:
+            list_view.action_cursor_up()
 
     async def action_select_deck(self) -> None:
         """Select the currently highlighted deck."""

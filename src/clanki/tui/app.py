@@ -94,7 +94,6 @@ class ClankiApp(App[None]):
     }
 
     #deck-list {
-        height: 1fr;
         border: solid $primary;
     }
 
