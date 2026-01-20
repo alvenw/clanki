@@ -4,9 +4,10 @@ Clanki is a terminal-based Anki review client. lets you review your Anki flashca
 
 ## Features
 
-- Full TUI (Terminal User Interface) for deck selection and review
+- Terminal User Interfacedeck selection and review
 - Supports all Anki scheduling algorithms
 - Image rendering and audio playback support
+  - Image rendering requires [chafa](https://hpjansson.org/chafa/) installed separately (`brew install chafa` on macOS, `apt install chafa` on Debian/Ubuntu)
 
 
 ## Prerequisites
@@ -22,9 +23,7 @@ Clanki is a terminal-based Anki review client. lets you review your Anki flashca
 [uv](https://docs.astral.sh/uv/) is the fastest way to install Python tools.
 
 ```bash
-git clone https://github.com/aaalvn/clanki.git
-cd clanki
-uv tool install .
+uv tool install clanki
 ```
 
 This installs `clanki` as a global command - no venv activation needed.
@@ -32,19 +31,15 @@ This installs `clanki` as a global command - no venv activation needed.
 ### Using pipx
 
 ```bash
-git clone https://github.com/aaalvn/clanki.git
-cd clanki
-pipx install .
+pipx install clanki
 ```
 
 ### Using pip (with venv)
 
 ```bash
-git clone https://github.com/aaalvn/clanki.git
-cd clanki
 python3 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install .
+pip install clanki
 ```
 
 ## Setup
@@ -84,17 +79,15 @@ The TUI provides:
 
 ### Sync with AnkiWeb
 
+Clanki writes directly to your local Anki database. Syncing is **not automatic**, run this command to push your progress to AnkiWeb:
+
 ```bash
 clanki sync
 ```
 
-## Troubleshooting
+Sync after reviewing, or before starting if you've reviewed on another device. You can also sync as you would normally through the Anki Desktop app.
 
-### "Collection is locked" / "Anki already open, or media currently syncing"
-
-**Cause:** We cannot run both clanki and Anki Desktop at the same time as we lock the collection database to prevent the two from getting out of sync.
-
-**Solution:** Close Anki Desktop completely before running clanki
+## Troubleshooting  
 
 ### "No Anki profiles found"
 
@@ -136,18 +129,18 @@ This is useful for:
 - Multiple Anki installations
 - Testing with a separate data directory
 
-### Profile Selection
+## Roadmap
 
-Profile selection is handled through the TUI. When you have multiple profiles, clanki will show a profile picker on startup. The most recently used profile is selected by default.
+### Planned
 
-## Development
+- [ ] More review actions (bury, suspend, flag, etc.)
+- [ ] Custom decks (filtered decks)
+- [ ] Profile switching within the TUI
+- [ ] Review statistics
+- [ ] Ability to run program with Anki desktop app open
 
-```bash
-cd clanki
-uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
+### Not Currently Planned
 
-pytest                 # Run tests
-mypy clanki        # Type checking
-ruff check .           # Linting
-```
+- Ability to create or edit cards/decks
+- Plugin support
+- Math/LaTeX rendering
