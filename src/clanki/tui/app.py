@@ -89,7 +89,8 @@ class ClankiApp(App[None]):
     .content-column {
         max-width: 96;
         width: 100%;
-        height: 100%;
+        height: 1fr;
+        min-height: 0;
     }
 
     #deck-list {
@@ -101,14 +102,15 @@ class ClankiApp(App[None]):
         margin: 1 0;
     }
 
-    /* Card container - fills space and centers content vertically */
+    /* Card container - fills available space with scrolling */
     .card-container {
         height: 1fr;
-        align: center middle;
+        min-height: 0;
+        margin-top: 1;
     }
 
     .card-content {
-        padding: 1 2;
+        padding: 0 2 1 2;
         height: auto;
     }
 

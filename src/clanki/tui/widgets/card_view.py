@@ -23,7 +23,7 @@ class CardViewWidget(Vertical):
         height: auto;
         width: 100%;
         max-width: 96;
-        padding: 1 2;
+        padding: 0;
     }
 
     CardViewWidget .card-section {

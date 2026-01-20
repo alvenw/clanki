@@ -94,7 +94,7 @@ class ReviewScreen(Screen[None]):
                     markup=True,
                 ),
                 StatsBar(id="stats-bar"),
-                Container(
+                VerticalScroll(
                     CardViewWidget(
                         id="card-view",
                         media_dir=media_dir,
@@ -247,6 +247,10 @@ class ReviewScreen(Screen[None]):
             )
         else:
             card_view.show_question(self._current_card.question_html)
+
+        # Reset scroll to top AFTER content update so scrollbar visual syncs correctly
+        scroll_container = self.query_one("#card-scroll", VerticalScroll)
+        scroll_container.scroll_home(animate=False)
 
         # Update help text (includes Show Answer prompt or Rating bar)
         help_bar = self.query_one("#help-bar", Static)
