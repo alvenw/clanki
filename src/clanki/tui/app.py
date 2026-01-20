@@ -98,10 +98,6 @@ class ClankiApp(App[None]):
         border: solid $primary;
     }
 
-    #filter-input {
-        margin: 1 0;
-    }
-
     /* Card container - fills available space with scrolling */
     .card-container {
         height: 1fr;

@@ -1,6 +1,6 @@
 """Deck picker screen for Clanki TUI.
 
-This screen displays a filterable list of decks with their due counts,
+This screen displays a hierarchical list of decks with their due counts,
 allowing users to select a deck to start a review session.
 """
 
@@ -14,7 +14,7 @@ from textual.binding import Binding
 from textual.containers import Container, Vertical
 from textual.message import Message
 from textual.screen import Screen
-from textual.widgets import Input, ListItem, ListView, Static
+from textual.widgets import ListItem, ListView, Static
 
 from ... import __version__
 
@@ -115,7 +115,6 @@ class DeckPickerScreen(Screen[str]):
         Binding("k", "cursor_up", "Up", show=False),
         Binding("enter", "select_deck", "Select"),
         Binding("space", "toggle_expand", "Expand/Collapse", show=False),
-        Binding("/", "focus_filter", "Filter", show=False),
     ]
 
     class DeckSelected(Message):
@@ -129,7 +128,6 @@ class DeckPickerScreen(Screen[str]):
         super().__init__()
         self._deck_tree: list[DeckNode] = []
         self._visible_nodes: list[DeckNode] = []
-        self._filter_text: str = ""
 
     @property
     def clanki_app(self) -> "ClankiApp":
@@ -151,7 +149,6 @@ class DeckPickerScreen(Screen[str]):
         yield Container(
             Vertical(
                 Static(f"clanki v{__version__}", classes="header-bar"),
-                Input(placeholder="Filter decks...", id="filter-input"),
                 ListView(id="deck-list"),
                 classes="content-column",
             ),
@@ -214,42 +211,25 @@ class DeckPickerScreen(Screen[str]):
         # If root has a name, it's a real node
         return [self._build_node(root, 0)]
 
-    def _get_visible_nodes(
-        self, nodes: list[DeckNode], filter_text: str = ""
-    ) -> list[DeckNode]:
-        """Get the list of visible nodes based on expanded state and filter.
-
-        When filtering, all matching nodes are shown regardless of expand state.
-        When not filtering, only expanded descendants are shown.
-        """
+    def _get_visible_nodes(self, nodes: list[DeckNode]) -> list[DeckNode]:
+        """Get the list of visible nodes based on expanded state."""
         result: list[DeckNode] = []
-        filter_lower = filter_text.lower()
 
         def walk(node_list: list[DeckNode]) -> None:
             for node in node_list:
-                if filter_text:
-                    # When filtering, show all matching nodes
-                    if filter_lower in node.name.lower():
-                        result.append(node)
-                    # Always recurse when filtering
+                result.append(node)
+                if node.deck_id in self._expanded_decks:
                     walk(node.children)
-                else:
-                    # When not filtering, respect expand state
-                    result.append(node)
-                    if node.deck_id in self._expanded_decks:
-                        walk(node.children)
 
         walk(nodes)
         return result
 
-    def _update_list(self, filter_text: str = "", restore_deck_id: int | None = None) -> None:
-        """Update the deck list with optional filtering.
+    def _update_list(self, restore_deck_id: int | None = None) -> None:
+        """Update the deck list.
 
         Args:
-            filter_text: Text to filter decks by name.
             restore_deck_id: If provided, restore highlight to this deck after rebuild.
         """
-        self._filter_text = filter_text
         list_view = self.query_one("#deck-list", ListView)
 
         # Remember current selection if not explicitly provided
@@ -259,7 +239,7 @@ class DeckPickerScreen(Screen[str]):
 
         list_view.clear()
 
-        self._visible_nodes = self._get_visible_nodes(self._deck_tree, filter_text)
+        self._visible_nodes = self._get_visible_nodes(self._deck_tree)
 
         for node in self._visible_nodes:
             is_expanded = node.deck_id in self._expanded_decks
@@ -278,11 +258,6 @@ class DeckPickerScreen(Screen[str]):
                 list_view.index = new_index
 
             list_view.call_after_refresh(restore_highlight)
-
-    async def on_input_changed(self, event: Input.Changed) -> None:
-        """Handle filter input changes."""
-        if event.input.id == "filter-input":
-            self._update_list(event.value)
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle deck selection from list."""
@@ -326,11 +301,7 @@ class DeckPickerScreen(Screen[str]):
             self._expanded_decks.add(node.deck_id)
 
         # Refresh the list - _update_list handles highlight restoration
-        self._update_list(self._filter_text)
-
-    async def action_focus_filter(self) -> None:
-        """Focus the filter input."""
-        self.query_one("#filter-input", Input).focus()
+        self._update_list()
 
     async def _select_deck(self, node: DeckNode) -> None:
         """Select a deck and push the review screen."""
