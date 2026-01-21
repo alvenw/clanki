@@ -1,20 +1,28 @@
 # Clanki
 
-Clanki is a terminal-based Anki review client. lets you review your Anki flashcards directly from the terminal. It uses the same underlying database and scheduling as Anki Desktop, so your progress stays perfectly in sync.
+Clanki is a terminal-based Anki review client that lets you review your Anki flashcards directly from the terminal. It uses the same underlying database and scheduling as Anki Desktop, so your progress stays perfectly in sync.
+
+![Clanki demo](ankiterm.gif)
 
 ## Features
 
-- Terminal User Interfacedeck selection and review
-- Supports all Anki scheduling algorithms
-- Image rendering and audio playback support
-  - Image rendering requires [chafa](https://hpjansson.org/chafa/) installed separately (`brew install chafa` on macOS, `apt install chafa` on Debian/Ubuntu)
+| Feature | Supported |
+|---------|-----------|
+| Anki scheduling algorithms | ✅ |
+| Image rendering | ✅ (requires [chafa](https://hpjansson.org/chafa/)) |
+| Audio playback | ✅ (macOS only) |
+| Basic cards | ✅ |
+| Cloze cards | ✅ |
+| Type in the answer | 🚧 |
+| Image occlusion | ❌ |
+| Custom card styling | ❌ |
 
 
 ## Prerequisites
 
 - Python 3.10 or later
 - Anki Desktop installed with at least one synced profile
-- Anki Desktop must be **closed** when running clanki (database lock)
+- Anki Desktop must be **closed** when running clanki
 
 ## Installation
 
