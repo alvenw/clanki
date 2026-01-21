@@ -39,9 +39,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/aaalvn/clanki"
-Repository = "https://github.com/aaalvn/clanki"
-Issues = "https://github.com/aaalvn/clanki/issues"
+Homepage = "https://github.com/alvenw/clanki"
+Repository = "https://github.com/alvenw/clanki"
+Issues = "https://github.com/alvenw/clanki/issues"
 
 [project.scripts]
 clanki = "clanki.cli:main"
