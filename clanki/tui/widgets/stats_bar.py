@@ -62,9 +62,10 @@ class DeckCountsBar(Static):
 
     def _refresh_display(self) -> None:
         """Refresh the displayed statistics."""
+        # Colors matched to Anki's dark mode UI
         text = (
-            f"[bold blue]{self._new}[/bold blue] New  "
-            f"[bold red]{self._learn}[/bold red] Learn  "
-            f"[bold green]{self._review}[/bold green] Review"
+            f"[bold #5eb5f7]{self._new}[/bold #5eb5f7] New  "
+            f"[bold #e96c6c]{self._learn}[/bold #e96c6c] Learning  "
+            f"[bold #6cd97e]{self._review}[/bold #6cd97e] Review"
         )
         self.update(text)
