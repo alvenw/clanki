@@ -9,11 +9,11 @@ Clanki is a terminal-based Anki review client that lets you review your Anki fla
 | Feature | Supported |
 |---------|-----------|
 | Anki scheduling algorithms | ✅ |
-| Image rendering | ✅ (requires [chafa](https://hpjansson.org/chafa/)) |
+| Image rendering | ✅ (requires [chafa](https://hpjansson.org/chafa/), will not render images at high fidelity) |
 | Audio playback | ✅ (macOS only) |
 | Basic cards | ✅ |
 | Cloze cards | ✅ |
-| Type in the answer | 🚧 |
+| Type in the answer | 🚧 (planned)|
 | Image occlusion | ❌ |
 | Custom card styling | ❌ |
 
@@ -56,6 +56,8 @@ pip install clanki
 
 Before using clanki, you must sync your Anki collection at least once using Anki Desktop. This ensures your collection database exists and authentication credentials are cached.
 
+If you already have Anki Desktop installed and synced with your AnkiWeb account, you can skip these steps.
+
 1. Open Anki Desktop
 2. Sign in to your AnkiWeb account
 3. Sync your collection (Sync button or press Y)
@@ -78,11 +80,6 @@ Simply run `clanki` to launch the TUI:
 ```bash
 clanki
 ```
-
-The TUI provides:
-- Profile selection (if you have multiple profiles)
-- Deck browser with due counts
-- Card review with keyboard navigation
 
 
 ### Sync with AnkiWeb
@@ -143,6 +140,7 @@ This is useful for:
 
 - [ ] More review actions (bury, suspend, flag, etc.)
 - [ ] Custom decks (filtered decks)
+- [ ] Support for type in answer cards
 - [ ] Profile switching within the TUI
 - [ ] Review statistics
 - [ ] Ability to run program with Anki desktop app open
@@ -150,5 +148,6 @@ This is useful for:
 ### Not Currently Planned
 
 - Ability to create or edit cards/decks
+- Rendering custom card styles
 - Plugin support
 - Math/LaTeX rendering
