@@ -1,10 +1,10 @@
-<video src="clanki.mp4" controls width="100%"></video>
+![Clanki](clanki.gif)
 
 # Clanki
 
 Clanki is a terminal-based Anki review client that lets you review your Anki flashcards directly from the terminal. It uses the same underlying database and scheduling as Anki Desktop, so your progress stays perfectly in sync.
 
-https://github.com/alvenw/clanki/blob/main/clanki-demo.mp4
+![Clanki demo](clanki-demo.gif)
 
 ## Features
 
