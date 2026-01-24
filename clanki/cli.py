@@ -11,7 +11,6 @@ This module provides the command-line interface with support for:
 from __future__ import annotations
 
 import argparse
-import shutil
 import sys
 from pathlib import Path
 
@@ -87,21 +86,11 @@ def _cmd_sync(args: argparse.Namespace) -> int:
         return 1
 
 
-def _check_image_support_available() -> bool:
-    """Check if chafa is available for image rendering."""
-    return shutil.which("chafa") is not None
-
-
 def _resolve_images_enabled(args: argparse.Namespace) -> bool:
     """Resolve images_enabled from CLI flags or config.
 
     CLI flags take precedence over stored config.
-    Returns False if chafa is not installed.
     """
-    # If chafa not installed, images can't be enabled
-    if not _check_image_support_available():
-        return False
-
     # CLI override takes precedence
     if getattr(args, "images", None) is True:
         return True

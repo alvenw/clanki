@@ -1,4 +1,4 @@
-"""Tests for tui/render.py - TUI image placeholder parsing and chafa rendering."""
+"""Tests for tui/render.py - TUI image placeholder parsing and textual-image rendering."""
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -8,8 +8,7 @@ from rich.text import Text
 from clanki.render import RenderMode, StyledSegment, TextStyle
 from clanki.tui.render import (
     ImagePlaceholder,
-    _check_chafa_available,
-    _render_image_to_string,
+    _create_image_renderable,
     _segment_to_rich_style,
     is_image_support_available,
     parse_image_placeholders,
@@ -17,13 +16,6 @@ from clanki.tui.render import (
     render_styled_content_with_images,
     segments_to_rich_text,
 )
-
-
-def reset_cache():
-    """Reset the module-level cache."""
-    import clanki.tui.render as render_module
-
-    render_module._chafa_available = None
 
 
 class TestParseImagePlaceholders:
@@ -88,152 +80,51 @@ class TestParseImagePlaceholders:
         assert text[result[0].start : result[0].end] == "[image: test.jpg]"
 
 
-class TestChafaAvailability:
-    """Tests for chafa availability checking."""
+class TestImageSupportAvailability:
+    """Tests for image support availability checking."""
 
-    def test_is_image_support_available_delegates(self):
-        """is_image_support_available should delegate to _check_chafa_available."""
-        reset_cache()
-
-        with patch("clanki.tui.render._check_chafa_available") as mock_check:
-            mock_check.return_value = True
-            result = is_image_support_available()
-            assert result is True
-            mock_check.assert_called()
-
-        reset_cache()
-
-    def test_check_chafa_uses_shutil_which(self):
-        """_check_chafa_available should use shutil.which."""
-        reset_cache()
-
-        with patch("shutil.which") as mock_which:
-            mock_which.return_value = "/usr/bin/chafa"
-            result = _check_chafa_available()
-            assert result is True
-            mock_which.assert_called_with("chafa")
-
-        reset_cache()
-
-        with patch("shutil.which") as mock_which:
-            mock_which.return_value = None
-            result = _check_chafa_available()
-            assert result is False
-
-        reset_cache()
+    def test_is_image_support_available_returns_true(self):
+        """is_image_support_available should always return True since textual-image is a dependency."""
+        result = is_image_support_available()
+        assert result is True
 
 
-class TestRenderImageToString:
-    """Tests for _render_image_to_string function."""
-
-    def test_returns_none_if_chafa_unavailable(self, tmp_path):
-        """Should return None if chafa is not available."""
-        reset_cache()
-
-        image_path = tmp_path / "test.png"
-        image_path.touch()
-
-        with patch("shutil.which", return_value=None):
-            result = _render_image_to_string(image_path)
-            assert result is None
-
-        reset_cache()
+class TestCreateImageRenderable:
+    """Tests for _create_image_renderable function."""
 
     def test_returns_none_if_file_missing(self):
         """Should return None if image file doesn't exist."""
-        reset_cache()
+        result = _create_image_renderable(Path("/nonexistent/image.png"))
+        assert result is None
 
-        with patch("shutil.which", return_value="/usr/bin/chafa"):
-            result = _render_image_to_string(Path("/nonexistent/image.png"))
+    def test_creates_image_when_file_exists(self, tmp_path):
+        """Should create an Image renderable when file exists."""
+        # Create a minimal valid image file (1x1 PNG)
+        image_path = tmp_path / "test.png"
+        # Write a minimal valid 1x1 PNG file
+        png_data = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+            b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00"
+            b"\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        image_path.write_bytes(png_data)
+
+        with patch("clanki.tui.render.Image") as mock_image:
+            mock_instance = MagicMock()
+            mock_image.return_value = mock_instance
+            result = _create_image_renderable(image_path, max_width=40, max_height=20)
+
+            mock_image.assert_called_once_with(image_path, width=40, height=20)
+            assert result == mock_instance
+
+    def test_returns_none_on_exception(self, tmp_path):
+        """Should return None if Image creation raises an exception."""
+        image_path = tmp_path / "test.png"
+        image_path.touch()
+
+        with patch("clanki.tui.render.Image", side_effect=Exception("Test error")):
+            result = _create_image_renderable(image_path)
             assert result is None
-
-        reset_cache()
-
-    def test_calls_chafa_with_correct_args(self, tmp_path):
-        """Should call chafa with format symbols, block characters, and size."""
-        reset_cache()
-
-        image_path = tmp_path / "test.png"
-        image_path.touch()
-
-        with (
-            patch("shutil.which", return_value="/usr/bin/chafa"),
-            patch("subprocess.run") as mock_run,
-        ):
-            mock_run.return_value = MagicMock(returncode=0, stdout="###\n###\n")
-            _render_image_to_string(image_path, max_width=40, max_height=20)
-
-            mock_run.assert_called_once()
-            call_args = mock_run.call_args
-            cmd = call_args[0][0]
-
-            assert cmd[0] == "chafa"
-            assert "--format" in cmd
-            assert "symbols" in cmd
-            assert "--symbols" in cmd
-            assert "block" in cmd
-            assert "--size" in cmd
-            assert "40x20" in cmd
-            assert str(image_path) in cmd
-
-        reset_cache()
-
-    def test_calls_chafa_with_height_only(self, tmp_path):
-        """Should call chafa with --size x{height} when only max_height is set."""
-        reset_cache()
-
-        image_path = tmp_path / "test.png"
-        image_path.touch()
-
-        with (
-            patch("shutil.which", return_value="/usr/bin/chafa"),
-            patch("subprocess.run") as mock_run,
-        ):
-            mock_run.return_value = MagicMock(returncode=0, stdout="###\n")
-            _render_image_to_string(image_path, max_width=None, max_height=20)
-
-            mock_run.assert_called_once()
-            call_args = mock_run.call_args
-            cmd = call_args[0][0]
-
-            assert "--size" in cmd
-            assert "x20" in cmd
-
-        reset_cache()
-
-    def test_returns_chafa_output(self, tmp_path):
-        """Should return chafa's stdout on success."""
-        reset_cache()
-
-        image_path = tmp_path / "test.png"
-        image_path.touch()
-
-        with (
-            patch("shutil.which", return_value="/usr/bin/chafa"),
-            patch("subprocess.run") as mock_run,
-        ):
-            mock_run.return_value = MagicMock(returncode=0, stdout="ASCII ART\n")
-            result = _render_image_to_string(image_path)
-            assert result == "ASCII ART"
-
-        reset_cache()
-
-    def test_returns_none_on_chafa_error(self, tmp_path):
-        """Should return None if chafa returns non-zero exit code."""
-        reset_cache()
-
-        image_path = tmp_path / "test.png"
-        image_path.touch()
-
-        with (
-            patch("shutil.which", return_value="/usr/bin/chafa"),
-            patch("subprocess.run") as mock_run,
-        ):
-            mock_run.return_value = MagicMock(returncode=1, stdout="")
-            result = _render_image_to_string(image_path)
-            assert result is None
-
-        reset_cache()
 
 
 class TestRenderContentWithImages:
@@ -261,98 +152,88 @@ class TestRenderContentWithImages:
 
     def test_no_media_dir_keeps_placeholder(self):
         """Without media dir, should keep placeholder text."""
-        reset_cache()
-
         text = "Before [image: test.jpg] after"
-        with patch("clanki.tui.render._check_chafa_available", return_value=True):
-            result = render_content_with_images(text, None, images_enabled=True)
-            # Without media_dir, should produce 3 items: text before, placeholder, text after
-            assert len(result) == 3
-            assert isinstance(result[0], Text)
-            assert isinstance(result[1], Text)
-            assert isinstance(result[2], Text)
-            # First should be "Before "
-            assert str(result[0]) == "Before "
-            # Second should be the placeholder
-            assert str(result[1]) == "[image: test.jpg]"
-            # Third should be " after"
-            assert str(result[2]) == " after"
-
-        reset_cache()
+        result = render_content_with_images(text, None, images_enabled=True)
+        # Without media_dir, should produce 3 items: text before, placeholder, text after
+        assert len(result) == 3
+        assert isinstance(result[0], Text)
+        assert isinstance(result[1], Text)
+        assert isinstance(result[2], Text)
+        # First should be "Before "
+        assert str(result[0]) == "Before "
+        # Second should be the placeholder
+        assert str(result[1]) == "[image: test.jpg]"
+        # Third should be " after"
+        assert str(result[2]) == " after"
 
     def test_missing_file_keeps_placeholder(self, tmp_path):
         """Missing image file should keep placeholder text."""
-        reset_cache()
-
         text = "[image: nonexistent.jpg]"
-        with patch("clanki.tui.render._check_chafa_available", return_value=True):
-            result = render_content_with_images(text, tmp_path, images_enabled=True)
-            # Should return exactly one item: the placeholder text
-            assert len(result) == 1
-            assert isinstance(result[0], Text)
-            # Placeholder should be exactly preserved
-            assert str(result[0]) == "[image: nonexistent.jpg]"
+        result = render_content_with_images(text, tmp_path, images_enabled=True)
+        # Should return exactly one item: the placeholder text
+        assert len(result) == 1
+        assert isinstance(result[0], Text)
+        # Placeholder should be exactly preserved
+        assert str(result[0]) == "[image: nonexistent.jpg]"
 
-        reset_cache()
+    def test_existing_file_creates_image_renderable(self, tmp_path):
+        """Existing image file should create Image renderable."""
+        # Create a test image file
+        image_path = tmp_path / "test.jpg"
+        image_path.touch()
+
+        text = "[image: test.jpg]"
+        with patch("clanki.tui.render._create_image_renderable") as mock_create:
+            mock_image = MagicMock()
+            mock_create.return_value = mock_image
+            result = render_content_with_images(text, tmp_path, images_enabled=True)
+
+            assert len(result) == 1
+            assert result[0] == mock_image
 
     def test_preserves_text_before_placeholder(self, tmp_path):
         """Text before placeholder should be preserved."""
-        reset_cache()
-
         text = "Before text [image: test.jpg]"
-        with patch("clanki.tui.render._check_chafa_available", return_value=True):
-            result = render_content_with_images(text, tmp_path, images_enabled=True)
-            # Should have 2 items: text before and the placeholder
-            assert len(result) == 2
-            assert isinstance(result[0], Text)
-            assert isinstance(result[1], Text)
-            # First item should be exactly "Before text "
-            assert str(result[0]) == "Before text "
-            # Second item should be the placeholder
-            assert str(result[1]) == "[image: test.jpg]"
-
-        reset_cache()
+        result = render_content_with_images(text, tmp_path, images_enabled=True)
+        # Should have 2 items: text before and the placeholder
+        assert len(result) == 2
+        assert isinstance(result[0], Text)
+        assert isinstance(result[1], Text)
+        # First item should be exactly "Before text "
+        assert str(result[0]) == "Before text "
+        # Second item should be the placeholder
+        assert str(result[1]) == "[image: test.jpg]"
 
     def test_preserves_text_after_placeholder(self, tmp_path):
         """Text after placeholder should be preserved."""
-        reset_cache()
-
         text = "[image: test.jpg] After text"
-        with patch("clanki.tui.render._check_chafa_available", return_value=True):
-            result = render_content_with_images(text, tmp_path, images_enabled=True)
-            # Should have 2 items: placeholder and text after
-            assert len(result) == 2
-            assert isinstance(result[0], Text)
-            assert isinstance(result[1], Text)
-            # First item should be the placeholder
-            assert str(result[0]) == "[image: test.jpg]"
-            # Second item should be exactly " After text"
-            assert str(result[1]) == " After text"
-
-        reset_cache()
+        result = render_content_with_images(text, tmp_path, images_enabled=True)
+        # Should have 2 items: placeholder and text after
+        assert len(result) == 2
+        assert isinstance(result[0], Text)
+        assert isinstance(result[1], Text)
+        # First item should be the placeholder
+        assert str(result[0]) == "[image: test.jpg]"
+        # Second item should be exactly " After text"
+        assert str(result[1]) == " After text"
 
     def test_multiple_placeholders(self, tmp_path):
         """Multiple placeholders should all be handled."""
-        reset_cache()
-
         text = "One [image: a.jpg] two [image: b.jpg] three"
-        with patch("clanki.tui.render._check_chafa_available", return_value=True):
-            result = render_content_with_images(text, tmp_path, images_enabled=True)
-            # Should have 5 items: text, placeholder, text, placeholder, text
-            assert len(result) == 5
-            # Verify each item type and content
-            assert isinstance(result[0], Text)
-            assert str(result[0]) == "One "
-            assert isinstance(result[1], Text)
-            assert str(result[1]) == "[image: a.jpg]"
-            assert isinstance(result[2], Text)
-            assert str(result[2]) == " two "
-            assert isinstance(result[3], Text)
-            assert str(result[3]) == "[image: b.jpg]"
-            assert isinstance(result[4], Text)
-            assert str(result[4]) == " three"
-
-        reset_cache()
+        result = render_content_with_images(text, tmp_path, images_enabled=True)
+        # Should have 5 items: text, placeholder, text, placeholder, text
+        assert len(result) == 5
+        # Verify each item type and content
+        assert isinstance(result[0], Text)
+        assert str(result[0]) == "One "
+        assert isinstance(result[1], Text)
+        assert str(result[1]) == "[image: a.jpg]"
+        assert isinstance(result[2], Text)
+        assert str(result[2]) == " two "
+        assert isinstance(result[3], Text)
+        assert str(result[3]) == "[image: b.jpg]"
+        assert isinstance(result[4], Text)
+        assert str(result[4]) == " three"
 
 
 class TestImagePlaceholderDataclass:

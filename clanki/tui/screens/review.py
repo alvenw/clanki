@@ -26,7 +26,6 @@ from ...audio import (
 from ...config_store import Config, load_config, save_config
 from ...render import render_html_to_text
 from ...review import CardView, DeckNotFoundError, Rating, ReviewSession, UndoError
-from ..render import is_image_support_available
 from ..widgets.card_view import CardViewWidget
 from ..widgets.stats_bar import DeckCountsBar, StatsBar
 
@@ -465,22 +464,7 @@ class ReviewScreen(Screen[None]):
 
     async def action_toggle_images(self) -> None:
         """Toggle image rendering on/off and persist to config."""
-        import clanki.tui.render as render_module
-
         state = self.clanki_app.state
-
-        # Reset the cache to ensure fresh detection
-        render_module._chafa_available = None
-
-        # If trying to enable images, check if chafa is available
-        if not state.images_enabled and not is_image_support_available():
-            self.notify(
-                "Install chafa: brew install chafa (macOS) or apt install chafa (Linux)",
-                title="Image support not installed",
-                severity="warning",
-                timeout=5,
-            )
-            return
 
         # Toggle the state
         state.images_enabled = not state.images_enabled

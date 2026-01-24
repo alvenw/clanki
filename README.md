@@ -1,15 +1,17 @@
+<video src="clanki.mp4" controls width="100%"></video>
+
 # Clanki
 
 Clanki is a terminal-based Anki review client that lets you review your Anki flashcards directly from the terminal. It uses the same underlying database and scheduling as Anki Desktop, so your progress stays perfectly in sync.
 
-![Clanki demo](ankiterm.gif)
+<video src="clanki-demo.mp4" controls width="100%"></video>
 
 ## Features
 
 | Feature | Supported |
 |---------|-----------|
 | Anki scheduling algorithms | ✅ |
-| Image rendering | ✅ (requires [chafa](https://hpjansson.org/chafa/), will not render images at high fidelity) |
+| Image rendering | ✅ |
 | Audio playback | ✅ (macOS only) |
 | Basic cards | ✅ |
 | Cloze cards | ✅ |

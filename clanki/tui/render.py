@@ -1,24 +1,75 @@
 """TUI-specific rendering helpers for card content.
 
 This module parses card text for [image: filename] placeholders and
-renders them using chafa when available and enabled. It also handles
+renders them using textual-image when available and enabled. It also handles
 audio placeholder icon substitution and styled text rendering.
 """
 
 from __future__ import annotations
 
+import os
 import re
-import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from rich.console import RenderableType
 from rich.style import Style
 from rich.text import Text
+from textual_image.renderable import (
+    SixelImage,
+    TGPImage,
+    UnicodeImage,
+)
+
+if TYPE_CHECKING:
+    from textual_image.renderable import Image
 
 from ..audio import substitute_audio_icons
 from ..render import RenderMode, StyledSegment, render_html_to_styled_segments
+
+
+def _detect_image_class() -> type:
+    """Detect the best image class based on terminal type.
+
+    textual-image's auto-detection doesn't always work correctly,
+    so we detect the terminal ourselves and use the appropriate class.
+
+    Returns:
+        The Image class to use (TGPImage, SixelImage, or UnicodeImage).
+    """
+    term_program = os.environ.get("TERM_PROGRAM", "").lower()
+    term = os.environ.get("TERM", "").lower()
+    lc_terminal = os.environ.get("LC_TERMINAL", "").lower()
+
+    # Kitty and Ghostty support the Kitty graphics protocol (TGP)
+    if "kitty" in term or "kitty" in term_program:
+        return TGPImage
+    if "ghostty" in term or "ghostty" in term_program:
+        return TGPImage
+
+    # iTerm2 and WezTerm support Sixel
+    if "iterm" in term_program or "iterm" in lc_terminal:
+        return SixelImage
+    if "wezterm" in term_program:
+        return SixelImage
+
+    # Terminals that commonly support Sixel
+    if any(x in term for x in ["xterm", "mlterm", "contour", "foot"]):
+        return SixelImage
+
+    # Fallback to Unicode half-block characters
+    return UnicodeImage
+
+
+# Cache the detected image class at module load time
+_ImageClass: type = _detect_image_class()
+
+# Log the detected protocol for debugging
+import logging as _logging
+
+_logger = _logging.getLogger(__name__)
+_logger.debug("Detected terminal image protocol: %s", _ImageClass.__module__.split(".")[-1])
 
 # Pattern to match [image: filename] placeholders
 IMAGE_PLACEHOLDER_PATTERN = re.compile(r"\[image:\s*([^\]]+)\]")
@@ -54,36 +105,26 @@ def parse_image_placeholders(text: str) -> list[ImagePlaceholder]:
     return placeholders
 
 
-_chafa_available: bool | None = None
-
-
-def _check_chafa_available() -> bool:
-    """Check if chafa binary is available in PATH."""
-    global _chafa_available
-    if _chafa_available is not None:
-        return _chafa_available
-
-    _chafa_available = shutil.which("chafa") is not None
-    return _chafa_available
-
-
 def is_image_support_available() -> bool:
     """Public API to check if image rendering is available.
 
     Returns:
-        True if chafa is installed and can render images.
+        True - textual-image is always available as a dependency.
     """
-    return _check_chafa_available()
+    return True
 
 
-def _render_image_to_string(
+def _create_image_renderable(
     image_path: Path,
     max_width: int | None = None,
     max_height: int | None = None,
-) -> str | None:
-    """Render an image to text using chafa.
+) -> "Image | None":
+    """Create a textual-image Image renderable for an image file.
 
-    Uses block characters with colors for good visual quality.
+    Uses terminal-specific image class detected at module load time:
+    - TGPImage for Kitty/Ghostty (Kitty graphics protocol)
+    - SixelImage for iTerm2/WezTerm/xterm
+    - UnicodeImage as fallback
 
     Args:
         image_path: Path to the image file.
@@ -91,48 +132,15 @@ def _render_image_to_string(
         max_height: Maximum height in terminal cells.
 
     Returns:
-        ANSI-colored text representation of the image, or None on failure.
+        Image renderable, or None if the file doesn't exist.
     """
-    if not _check_chafa_available():
-        return None
-
     if not image_path.exists():
         return None
 
     try:
-        # Build chafa command with block symbols and colors
-        cmd = ["chafa"]
-        cmd.extend(["--format", "symbols"])
-        cmd.extend(["--symbols", "block"])
-
-        # Set size constraints
-        if max_width is not None and max_height is not None:
-            cmd.extend(["--size", f"{max_width}x{max_height}"])
-        elif max_width is not None:
-            cmd.extend(["--size", f"{max_width}x"])
-        elif max_height is not None:
-            cmd.extend(["--size", f"x{max_height}"])
-
-        # Add image path
-        cmd.append(str(image_path))
-
-        # Run chafa and capture output
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-
-        if result.returncode != 0:
-            return None
-
-        output = result.stdout
-        if not output or not output.strip():
-            return None
-
-        return output.rstrip()
-    except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError):
+        # Use the terminal-specific image class
+        return _ImageClass(image_path, width=max_width, height=max_height)
+    except Exception:
         return None
 
 
@@ -155,7 +163,7 @@ def render_content_with_images(
         max_height: Maximum height for images in terminal cells.
 
     Returns:
-        List of Rich renderables (Text objects).
+        List of Rich renderables (Text objects and Image renderables).
         Falls back to placeholder text on any failure.
     """
     if not text:
@@ -170,10 +178,6 @@ def render_content_with_images(
     if not placeholders or not images_enabled:
         return [Text(text)]
 
-    # Check if chafa is available
-    if not _check_chafa_available():
-        return [Text(text)]
-
     # Build list of renderables, preserving whitespace
     renderables: list[RenderableType] = []
     last_end = 0
@@ -185,14 +189,13 @@ def render_content_with_images(
             if text_before:
                 renderables.append(Text(text_before))
 
-        # Try to render the image to a string
+        # Try to render the image
         image_rendered = False
         if media_dir is not None:
             image_path = media_dir / placeholder.filename
-            img_str = _render_image_to_string(image_path, max_width, max_height)
-            if img_str is not None:
-                # Use Text.from_ansi to properly handle ANSI escape sequences
-                renderables.append(Text.from_ansi(img_str))
+            img = _create_image_renderable(image_path, max_width, max_height)
+            if img is not None:
+                renderables.append(img)
                 image_rendered = True
 
         # Fall back to placeholder text if image rendering failed
@@ -277,7 +280,7 @@ def render_styled_content_with_images(
         max_height: Maximum height for images in terminal cells.
 
     Returns:
-        List of Rich renderables (Text objects, possibly with images).
+        List of Rich renderables (Text objects, possibly with Image renderables).
     """
     if not html:
         return []
@@ -313,10 +316,6 @@ def render_styled_content_with_images(
     if not placeholders or not images_enabled:
         return [styled_text]
 
-    # Check if chafa is available
-    if not _check_chafa_available():
-        return [styled_text]
-
     # Build list of renderables, replacing image placeholders with rendered images
     renderables: list[RenderableType] = []
     last_end = 0
@@ -333,9 +332,9 @@ def render_styled_content_with_images(
         image_rendered = False
         if media_dir is not None:
             image_path = media_dir / placeholder.filename
-            img_str = _render_image_to_string(image_path, max_width, max_height)
-            if img_str is not None:
-                renderables.append(Text.from_ansi(img_str))
+            img = _create_image_renderable(image_path, max_width, max_height)
+            if img is not None:
+                renderables.append(img)
                 image_rendered = True
 
         # Fall back to placeholder text if image rendering failed
