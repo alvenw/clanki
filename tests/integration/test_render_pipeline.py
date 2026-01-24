@@ -258,22 +258,15 @@ class TestRenderStyledContentWithImages:
 
     def test_image_placeholder_preserved_when_no_media_dir(self, tmp_path):
         """Image placeholders preserved when media_dir is None."""
-        # Reset chafa cache
-        import clanki.tui.render as render_module
-        render_module._chafa_available = None
-
-        with patch("shutil.which", return_value="/usr/bin/chafa"):
-            result = render_styled_content_with_images(
-                '<div><img src="test.png"></div>',
-                media_dir=None,  # No media dir
-                images_enabled=True,
-            )
+        result = render_styled_content_with_images(
+            '<div><img src="test.png"></div>',
+            media_dir=None,  # No media dir
+            images_enabled=True,
+        )
 
         # Should fall back to placeholder since no media_dir
         combined = "".join(str(r) for r in result)
         assert "[image: test.png]" in combined
-
-        render_module._chafa_available = None
 
     def test_audio_icons_substituted_in_styled_output(self):
         """Audio placeholders should be replaced with icons in styled output."""

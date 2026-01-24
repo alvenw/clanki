@@ -37,6 +37,9 @@ class CardViewWidget(Vertical):
     }
     """
 
+    # Fixed max height for images to prevent resize feedback loops
+    MAX_IMAGE_HEIGHT = 20
+
     def __init__(
         self,
         id: str | None = None,
@@ -48,6 +51,7 @@ class CardViewWidget(Vertical):
         self._answer_html: str | None = None
         self._media_dir = media_dir
         self._images_enabled = images_enabled
+        self._last_width: int = 0  # Track width to avoid unnecessary re-renders
 
     def set_media_dir(self, media_dir: Path | None) -> None:
         """Set the media directory for image loading."""
@@ -80,29 +84,33 @@ class CardViewWidget(Vertical):
         self._refresh_content()
 
     def _get_max_image_size(self) -> tuple[int | None, int | None]:
-        """Calculate maximum image size based on available content region.
+        """Calculate maximum image size based on available width.
+
+        Uses a fixed max height to prevent resize feedback loops where:
+        1. Image renders and increases widget height
+        2. Resize triggers re-render with larger max_height
+        3. Image grows, increasing height further (infinite loop)
 
         Returns:
             Tuple of (max_width, max_height) in terminal cells.
         """
         try:
-            # content_region accounts for widget's own padding (1 2)
+            # content_region accounts for widget's own padding
             region = self.content_region
 
-            # If size isn't known yet (pre-layout), let chafa decide
-            if region.width <= 0 or region.height <= 0:
-                return (None, None)
+            # If size isn't known yet (pre-layout), use defaults
+            if region.width <= 0:
+                return (None, self.MAX_IMAGE_HEIGHT)
 
-            # Subtract card-section chrome: border (1 each side) + padding (2h/1v each side)
+            # Subtract card-section chrome: border (1 each side) + padding (2h each side)
             width = region.width - 6
-            height = region.height - 4
 
-            if width <= 0 or height <= 0:
-                return (None, None)
+            if width <= 0:
+                return (None, self.MAX_IMAGE_HEIGHT)
 
-            return (max(10, width), max(5, height))
+            return (max(10, width), self.MAX_IMAGE_HEIGHT)
         except Exception:
-            return (None, None)
+            return (None, self.MAX_IMAGE_HEIGHT)
 
     def _render_section_content(
         self, html: str, mode: RenderMode = RenderMode.ANSWER
@@ -167,6 +175,13 @@ class CardViewWidget(Vertical):
                 logger.error("Fallback mounting also failed: %s", fallback_exc)
 
     def on_resize(self, event: events.Resize) -> None:
-        """Re-render content when widget is resized to fix image scaling."""
-        if self._images_enabled and (self._question_html or self._answer_html):
-            self._refresh_content()
+        """Re-render content when widget width changes to fix image scaling.
+
+        Only re-renders on width changes to prevent feedback loops where
+        height changes from image rendering trigger more resizes.
+        """
+        current_width = event.size.width
+        if current_width != self._last_width:
+            self._last_width = current_width
+            if self._images_enabled and (self._question_html or self._answer_html):
+                self._refresh_content()

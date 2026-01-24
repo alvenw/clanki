@@ -29,6 +29,7 @@ classifiers = [
 dependencies = [
     "anki==25.9.2",
     "textual>=0.50",
+    "textual-image[textual]>=0.7",
 ]
 
 [project.optional-dependencies]
