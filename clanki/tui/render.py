@@ -17,6 +17,7 @@ from rich.console import RenderableType
 from rich.style import Style
 from rich.text import Text
 from textual_image.renderable import (
+    HalfcellImage,
     SixelImage,
     TGPImage,
     UnicodeImage,
@@ -47,6 +48,11 @@ def _detect_image_class() -> type:
         return TGPImage
     if "ghostty" in term or "ghostty" in term_program:
         return TGPImage
+
+    # Warp terminal - images handled by ITerm2Image Widget in card_view.py
+    # Use HalfcellImage as fallback for non-widget rendering paths
+    if "warp" in term_program:
+        return HalfcellImage
 
     # iTerm2 and WezTerm support Sixel
     if "iterm" in term_program or "iterm" in lc_terminal:

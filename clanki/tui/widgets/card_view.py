@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from textual import events
@@ -10,9 +11,15 @@ from textual.containers import Vertical
 from textual.widgets import Static
 
 from ...render import RenderMode
-from ..render import render_styled_content_with_images
+from ..render import render_styled_content_with_images, parse_image_placeholders
 
 logger = logging.getLogger(__name__)
+
+
+def _is_warp_terminal() -> bool:
+    """Check if running in Warp terminal."""
+    term_program = os.environ.get("TERM_PROGRAM", "").lower()
+    return "warp" in term_program
 
 
 class CardViewWidget(Vertical):
@@ -114,18 +121,18 @@ class CardViewWidget(Vertical):
 
     def _render_section_content(
         self, html: str, mode: RenderMode = RenderMode.ANSWER
-    ) -> list[Static]:
-        """Render section content with styling and image support.
+    ) -> list[Static | "Widget"]:
+        """Render section content with styling and image support."""
+        from textual.widget import Widget
 
-        Args:
-            html: HTML content from Anki card rendering.
-            mode: Render mode - QUESTION shows [...] for cloze, ANSWER shows styled cloze text.
+        # Check if we should use iTerm2 Widget for Warp terminal
+        use_iterm2_widget = _is_warp_terminal() and self._images_enabled
 
-        Returns:
-            List of Static widgets to mount.
-        """
         try:
             max_width, max_height = self._get_max_image_size()
+
+            if use_iterm2_widget:
+                return self._render_with_iterm2_widget(html, mode, max_width, max_height)
 
             renderables = render_styled_content_with_images(
                 html=html,
@@ -142,9 +149,71 @@ class CardViewWidget(Vertical):
 
             return widgets if widgets else [Static(html, classes="content")]
         except Exception as exc:
-            # Fall back to plain text on any rendering error
             logger.warning("Styled rendering failed, using plain text: %s", exc)
             return [Static(html, classes="content")]
+
+    def _render_with_iterm2_widget(
+        self,
+        html: str,
+        mode: RenderMode,
+        max_width: int | None,
+        max_height: int | None,
+    ) -> list[Static | "Widget"]:
+        """Render content using iTerm2 Widget for Warp terminal."""
+        from textual.widget import Widget
+        from .iterm2_image import ITerm2Image
+        from rich.text import Text
+
+        from ..render import segments_to_rich_text
+        from ...render import render_html_to_styled_segments as base_render
+        from ..render import parse_image_placeholders
+        from ...audio import substitute_audio_icons
+
+        # Get styled segments
+        segments = base_render(html, self._media_dir, mode)
+        if not segments:
+            return [Static(html, classes="content")]
+
+        styled_text = segments_to_rich_text(segments)
+        plain_text = str(styled_text)
+        plain_text = substitute_audio_icons(plain_text)
+
+        # Parse image placeholders
+        placeholders = parse_image_placeholders(plain_text)
+
+        if not placeholders or not self._media_dir:
+            return [Static(styled_text, classes="content")]
+
+        # Build widgets list
+        widgets: list[Static | Widget] = []
+        last_end = 0
+
+        for placeholder in placeholders:
+            # Add text before image
+            if placeholder.start > last_end:
+                text_before = plain_text[last_end:placeholder.start]
+                if text_before.strip():
+                    widgets.append(Static(Text(text_before), classes="content"))
+
+            # Add iTerm2 image widget
+            image_path = self._media_dir / placeholder.filename
+            if image_path.exists():
+                img_widget = ITerm2Image(image_path)
+                img_widget.styles.width = max_width or 40
+                img_widget.styles.height = max_height or 20
+                widgets.append(img_widget)
+            else:
+                widgets.append(Static(f"[image: {placeholder.filename}]", classes="content"))
+
+            last_end = placeholder.end
+
+        # Add remaining text
+        if last_end < len(plain_text):
+            text_after = plain_text[last_end:]
+            if text_after.strip():
+                widgets.append(Static(Text(text_after), classes="content"))
+
+        return widgets if widgets else [Static(html, classes="content")]
 
     def _refresh_content(self) -> None:
         """Refresh the widget content."""
