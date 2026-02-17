@@ -51,6 +51,9 @@ class ReviewScreen(Screen[None]):
         Binding("8", "play_audio_4", "Audio4", show=False),
         Binding("9", "play_audio_5", "Audio5", show=False),
         Binding("u", "undo", "Undo", show=False),
+        Binding("b", "bury_card", "Bury", show=False),
+        Binding("exclamation_mark", "suspend_card", "Suspend", show=False),
+        Binding("f", "cycle_flag", "Flag", show=False),
         Binding("i", "toggle_images", "Images", show=False),
         Binding("a", "replay_audio", "Audio", show=False),
         Binding("s", "toggle_audio", "Sound", show=False),
@@ -63,6 +66,7 @@ class ReviewScreen(Screen[None]):
         self._current_card: CardView | None = None
         self._answer_revealed = False
         self._processing_action = False  # Guard against rapid key presses
+        self._current_flag: int = 0  # Current flag value (0-7)
 
     @property
     def clanki_app(self) -> ClankiApp:
@@ -76,6 +80,7 @@ class ReviewScreen(Screen[None]):
         # Get initial settings from app state
         media_dir = self.clanki_app.state.media_dir
         images_enabled = self.clanki_app.state.images_enabled
+        high_contrast = self.clanki_app.state.high_contrast
 
         # Footer - full width, docked to bottom
         yield Static(
@@ -98,6 +103,7 @@ class ReviewScreen(Screen[None]):
                         id="card-view",
                         media_dir=media_dir,
                         images_enabled=images_enabled,
+                        high_contrast=high_contrast,
                     ),
                     id="card-scroll",
                     classes="card-container",
@@ -146,6 +152,8 @@ class ReviewScreen(Screen[None]):
             if self._current_card is not None and len(self._current_card.rating_labels) == 4
             else None
         )
+        extra_hints = f"{undo_hint}{replay_hint}[dim]b[/dim] bury  [dim]f[/dim] flag"
+
         if labels:
             again, hard, good, easy = labels
             return (
@@ -153,14 +161,14 @@ class ReviewScreen(Screen[None]):
                 f"[bold yellow]2[/bold yellow] Hard [dim]{hard}[/dim]  "
                 f"[bold green]3[/bold green] Good [dim]{good}[/dim]  "
                 f"[bold blue]4[/bold blue] Easy [dim]{easy}[/dim]  "
-                f"{undo_hint}{replay_hint}"
+                f"{extra_hints}"
             )
         return (
             "[bold red]1[/bold red] Again  "
             "[bold yellow]2[/bold yellow] Hard  "
             "[bold green]3[/bold green] Good  "
             "[bold blue]4[/bold blue] Easy  "
-            f"{undo_hint}{replay_hint}"
+            f"{extra_hints}"
         )
 
     async def on_mount(self) -> None:
@@ -217,6 +225,7 @@ class ReviewScreen(Screen[None]):
 
         self._current_card = self._session.next_card()
         self._answer_revealed = False
+        self._current_flag = 0
 
         if self._current_card is None:
             # No more cards - show done screen
@@ -436,6 +445,44 @@ class ReviewScreen(Screen[None]):
             await self._load_next_card()
         except Exception as exc:
             self.notify(f"Error rating card: {exc}", severity="error")
+
+    async def action_bury_card(self) -> None:
+        """Bury the current card (skip for today)."""
+        if self._session is None or self._current_card is None:
+            return
+        try:
+            self._session.bury_card()
+            self.notify("Card buried", severity="information")
+            self._update_stats()
+            await self._load_next_card()
+        except Exception as exc:
+            self.notify(f"Error burying card: {exc}", severity="error")
+
+    async def action_suspend_card(self) -> None:
+        """Suspend the current card."""
+        if self._session is None or self._current_card is None:
+            return
+        try:
+            self._session.suspend_card()
+            self.notify("Card suspended", severity="information")
+            self._update_stats()
+            await self._load_next_card()
+        except Exception as exc:
+            self.notify(f"Error suspending card: {exc}", severity="error")
+
+    async def action_cycle_flag(self) -> None:
+        """Cycle the flag on the current card (0-7)."""
+        if self._session is None or self._current_card is None:
+            return
+        try:
+            self._current_flag = (self._current_flag + 1) % 8
+            self._session.set_card_flag(self._current_flag)
+            if self._current_flag == 0:
+                self.notify("Flag removed", severity="information")
+            else:
+                self.notify(f"Flag {self._current_flag}", severity="information")
+        except Exception as exc:
+            self.notify(f"Error setting flag: {exc}", severity="error")
 
     async def action_undo(self) -> None:
         """Undo the last answer."""

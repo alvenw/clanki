@@ -214,10 +214,12 @@ class ReviewSession:
         rating_labels = list(self._col.sched.describe_next_states(queued_card.states))
 
         # Create CardView
+        # Use question_and_style() / answer_and_style() to include the note
+        # type's CSS so the renderer can apply class-based styling.
         card_view = CardView(
             card_id=card.id,
-            question_html=render_output.question_text,
-            answer_html=render_output.answer_text,
+            question_html=render_output.question_and_style(),
+            answer_html=render_output.answer_and_style(),
             card=card,
             states=queued_card.states,
             question_audio=_extract_audio_filenames(render_output.question_av_tags),
@@ -271,6 +273,45 @@ class ReviewSession:
         self._answered_card_ids.append(self._current_card.card_id)
         self._current_card = None
 
+    def bury_card(self) -> None:
+        """Bury the current card so it won't appear again today.
+
+        Raises:
+            RuntimeError: If no card is currently being reviewed.
+        """
+        if self._current_card is None:
+            raise RuntimeError("No card to bury. Call next_card() first.")
+        self._col.sched.bury_cards([self._current_card.card_id])
+        # Track for undo (col.undo() can reverse bury)
+        self._answered_card_ids.append(self._current_card.card_id)
+        self._current_card = None
+
+    def suspend_card(self) -> None:
+        """Suspend the current card (remove from future reviews until unsuspended).
+
+        Raises:
+            RuntimeError: If no card is currently being reviewed.
+        """
+        if self._current_card is None:
+            raise RuntimeError("No card to suspend. Call next_card() first.")
+        self._col.sched.suspend_cards([self._current_card.card_id])
+        # Track for undo (col.undo() can reverse suspend)
+        self._answered_card_ids.append(self._current_card.card_id)
+        self._current_card = None
+
+    def set_card_flag(self, flag: int) -> None:
+        """Set a flag on the current card.
+
+        Args:
+            flag: Flag value 0-7 (0 = no flag).
+
+        Raises:
+            RuntimeError: If no card is currently being reviewed.
+        """
+        if self._current_card is None:
+            raise RuntimeError("No card to flag. Call next_card() first.")
+        self._col.set_user_flag_for_cards(flag, [self._current_card.card_id])
+
     def undo(self) -> CardView:
         """Undo the last answer and return the card.
 
@@ -323,8 +364,8 @@ class ReviewSession:
 
         card_view = CardView(
             card_id=card.id,
-            question_html=render_output.question_text,
-            answer_html=render_output.answer_text,
+            question_html=render_output.question_and_style(),
+            answer_html=render_output.answer_and_style(),
             card=card,
             states=queued_card.states,
             question_audio=_extract_audio_filenames(render_output.question_av_tags),

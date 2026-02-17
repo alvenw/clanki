@@ -91,7 +91,6 @@ class DeckListItem(ListItem):
         self.is_expanded = is_expanded
 
     def compose(self) -> ComposeResult:
-        counts = self.node.format_counts()
         indent = "  " * self.node.depth
 
         # Toggle indicator for parent decks
@@ -100,8 +99,16 @@ class DeckListItem(ListItem):
         else:
             indicator = "  "
 
+        # Color-coded counts: new=blue, learn=red, review=green
+        colored_counts = (
+            f"[#5eb5f7]{self.node.new_count}[/#5eb5f7]/"
+            f"[#e96c6c]{self.node.learn_count}[/#e96c6c]/"
+            f"[#6cd97e]{self.node.review_count}[/#6cd97e]"
+        )
+
         yield Static(
-            f"{indent}{indicator}{self.node.leaf_name}  [dim]({counts})[/dim]",
+            f"{indent}{indicator}[bold]{self.node.leaf_name}[/bold]  "
+            f"[dim]({colored_counts})[/dim]",
             markup=True,
         )
 
@@ -115,6 +122,8 @@ class DeckPickerScreen(Screen[str]):
         Binding("k", "cursor_up", "Up", show=False),
         Binding("enter", "select_deck", "Select"),
         Binding("space", "toggle_expand", "Expand/Collapse", show=False),
+        Binding("c", "open_config", "Config", show=False),
+        Binding("t", "open_stats", "Stats", show=False),
     ]
 
     class DeckSelected(Message):
@@ -141,7 +150,8 @@ class DeckPickerScreen(Screen[str]):
         # Footer - full width, docked to bottom
         yield Static(
             "[dim]j/k[/dim] navigate  [dim]Space[/dim] expand/collapse  "
-            "[dim]Enter[/dim] select  [dim]q[/dim] quit",
+            "[dim]Enter[/dim] select  [dim]c[/dim] config  "
+            "[dim]t[/dim] stats  [dim]q[/dim] quit",
             classes="help-text footer-bar",
             markup=True,
         )
@@ -373,3 +383,15 @@ class DeckPickerScreen(Screen[str]):
         from .review import ReviewScreen
 
         await self.app.push_screen(ReviewScreen(canonical_name))
+
+    async def action_open_config(self) -> None:
+        """Open the configuration screen."""
+        from .config_screen import ConfigScreen
+
+        await self.app.push_screen(ConfigScreen())
+
+    async def action_open_stats(self) -> None:
+        """Open the statistics screen."""
+        from .stats_screen import StatsScreen
+
+        await self.app.push_screen(StatsScreen())

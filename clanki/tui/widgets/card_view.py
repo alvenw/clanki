@@ -3,16 +3,26 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from textual import events
 from textual.containers import Vertical
+from textual.widget import Widget
 from textual.widgets import Static
 
+from textual_image.widget import Image as ImageWidget
+
 from ...render import RenderMode
-from ..render import render_styled_content_with_images
+from ..render import ImageMarker, render_styled_content_with_images
+from .iterm2_image import ITerm2Image
 
 logger = logging.getLogger(__name__)
+
+
+def _is_warp_terminal() -> bool:
+    """Check if running in Warp terminal."""
+    return "warp" in os.environ.get("TERM_PROGRAM", "").lower()
 
 
 class CardViewWidget(Vertical):
@@ -35,22 +45,30 @@ class CardViewWidget(Vertical):
     CardViewWidget .content {
         height: auto;
     }
+
+    CardViewWidget .card-image {
+        height: auto;
+    }
     """
 
-    # Fixed max height for images to prevent resize feedback loops
-    MAX_IMAGE_HEIGHT = 20
+    # Caps for image display size (in terminal cells).
+    # Flashcard images should complement text, not dominate the card.
+    MAX_IMAGE_WIDTH = 50
+    MAX_IMAGE_HEIGHT = 15
 
     def __init__(
         self,
         id: str | None = None,
         media_dir: Path | None = None,
         images_enabled: bool = True,
+        high_contrast: bool = False,
     ) -> None:
         super().__init__(id=id)
         self._question_html: str = ""
         self._answer_html: str | None = None
         self._media_dir = media_dir
         self._images_enabled = images_enabled
+        self._high_contrast = high_contrast
         self._last_width: int = 0  # Track width to avoid unnecessary re-renders
 
     def set_media_dir(self, media_dir: Path | None) -> None:
@@ -60,6 +78,11 @@ class CardViewWidget(Vertical):
     def set_images_enabled(self, enabled: bool) -> None:
         """Set whether images should be rendered."""
         self._images_enabled = enabled
+        self._refresh_content()
+
+    def set_high_contrast(self, enabled: bool) -> None:
+        """Set whether high contrast mode is active."""
+        self._high_contrast = enabled
         self._refresh_content()
 
     def show_question(self, question_html: str) -> None:
@@ -112,9 +135,59 @@ class CardViewWidget(Vertical):
         except Exception:
             return (None, self.MAX_IMAGE_HEIGHT)
 
+    def _make_image_widget(
+        self, path: Path, max_width: int | None, max_height: int | None
+    ) -> Widget:
+        """Create an image widget with fixed, aspect-ratio-correct dimensions.
+
+        Reads the image's real pixel size, calculates the best fit within
+        the card area (accounting for the ~2:1 terminal cell aspect ratio),
+        and sets a *fixed* width + height on the widget so the layout never
+        oscillates.
+
+        Warp terminal uses the iTerm2 widget; others use textual-image.
+        """
+        from PIL import Image as PILImage
+
+        # Read real image dimensions
+        try:
+            with PILImage.open(path) as img:
+                img_w, img_h = img.size
+        except Exception:
+            img_w, img_h = 1, 1
+
+        avail_w = min(max_width or self.MAX_IMAGE_WIDTH, self.MAX_IMAGE_WIDTH)
+        avail_h = min(max_height or self.MAX_IMAGE_HEIGHT, self.MAX_IMAGE_HEIGHT)
+
+        # Terminal cells are roughly twice as tall as they are wide,
+        # so 1 row of cells ≈ 2 columns in visual height.
+        img_aspect = img_w / max(img_h, 1)
+
+        # Fit to available width, derive height from aspect ratio
+        display_w = avail_w
+        display_h = round(display_w / img_aspect / 2)
+
+        # If too tall, fit to height instead
+        if display_h > avail_h:
+            display_h = avail_h
+            display_w = round(display_h * img_aspect * 2)
+
+        display_w = max(display_w, 4)
+        display_h = max(display_h, 2)
+
+        if _is_warp_terminal():
+            widget: Widget = ITerm2Image(path, classes="card-image")
+        else:
+            widget = ImageWidget(path, classes="card-image")
+
+        # Fixed dimensions prevent layout oscillation / scroll jitter
+        widget.styles.width = display_w
+        widget.styles.height = display_h
+        return widget
+
     def _render_section_content(
         self, html: str, mode: RenderMode = RenderMode.ANSWER
-    ) -> list[Static]:
+    ) -> list[Widget]:
         """Render section content with styling and image support.
 
         Args:
@@ -122,7 +195,7 @@ class CardViewWidget(Vertical):
             mode: Render mode - QUESTION shows [...] for cloze, ANSWER shows styled cloze text.
 
         Returns:
-            List of Static widgets to mount.
+            List of widgets (Static for text, image widgets for images) to mount.
         """
         try:
             max_width, max_height = self._get_max_image_size()
@@ -134,11 +207,19 @@ class CardViewWidget(Vertical):
                 mode=mode,
                 max_width=max_width,
                 max_height=max_height,
+                high_contrast=self._high_contrast,
             )
 
-            widgets: list[Static] = []
+            widgets: list[Widget] = []
             for renderable in renderables:
-                widgets.append(Static(renderable, classes="content"))
+                if isinstance(renderable, ImageMarker):
+                    widgets.append(
+                        self._make_image_widget(
+                            renderable.path, max_width, max_height
+                        )
+                    )
+                else:
+                    widgets.append(Static(renderable, classes="content"))
 
             return widgets if widgets else [Static(html, classes="content")]
         except Exception as exc:
@@ -175,13 +256,13 @@ class CardViewWidget(Vertical):
                 logger.error("Fallback mounting also failed: %s", fallback_exc)
 
     def on_resize(self, event: events.Resize) -> None:
-        """Re-render content when widget width changes to fix image scaling.
+        """Re-render content when widget width changes significantly.
 
-        Only re-renders on width changes to prevent feedback loops where
-        height changes from image rendering trigger more resizes.
+        Uses a threshold of 4 columns to avoid feedback loops where
+        small layout adjustments from image rendering trigger more resizes.
         """
         current_width = event.size.width
-        if current_width != self._last_width:
+        if abs(current_width - self._last_width) >= 4:
             self._last_width = current_width
             if self._images_enabled and (self._question_html or self._answer_html):
                 self._refresh_content()

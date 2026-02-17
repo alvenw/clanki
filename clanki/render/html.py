@@ -15,11 +15,28 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from html import unescape
+from html import unescape as _html_unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
+
+
+def _safe_unescape(text: str, max_depth: int = 5) -> str:
+    """Iteratively unescape HTML entities until the text stabilizes.
+
+    Some Anki card templates produce double- or triple-encoded entities
+    (e.g. ``&amp;amp;`` → ``&amp;`` → ``&``). A single ``unescape()`` call
+    only decodes one layer, leaving partially-decoded artefacts visible.
+    This helper repeats the unescape until the output no longer changes or
+    *max_depth* iterations are reached.
+    """
+    for _ in range(max_depth):
+        unescaped = _html_unescape(text)
+        if unescaped == text:
+            break
+        text = unescaped
+    return text
 
 
 class RenderMode(Enum):
@@ -136,6 +153,45 @@ def _process_cloze_overlapping_html(html: str, mode: RenderMode) -> str:
     return html
 
 
+# Pattern to match <hr id=answer> or <hr id="answer"> (Anki's FrontSide/answer separator).
+# Only this specific pattern indicates {{FrontSide}} duplication.  Plain <hr> tags are
+# used as visual dividers within card content and must NOT trigger stripping.
+_HR_ID_ANSWER_PATTERN = re.compile(
+    r'<hr[^>]*\bid\s*=\s*["\']?answer["\']?[^>]*>',
+    re.IGNORECASE,
+)
+
+_STYLE_BLOCK_PATTERN = re.compile(
+    r'(<style[^>]*>.*?</style\s*>)',
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _strip_front_side_from_answer(html: str) -> str:
+    """Strip everything before ``<hr id=answer>`` from answer HTML.
+
+    Anki's answer_text for cards using ``{{FrontSide}}`` in the back template
+    contains the full front side followed by ``<hr id=answer>`` followed by
+    the actual answer content.  The question was already shown separately,
+    so we remove the duplicate front-side portion.
+
+    Only ``<hr id=answer>`` triggers stripping — plain ``<hr>`` tags are used
+    as visual separators within card content and are left alone.
+
+    Any ``<style>`` blocks are preserved so CSS class styling still works.
+    """
+    match = _HR_ID_ANSWER_PATTERN.search(html)
+    if match:
+        # Preserve <style> blocks from the stripped portion
+        stripped_part = html[:match.start()]
+        style_blocks = _STYLE_BLOCK_PATTERN.findall(stripped_part)
+        answer_part = html[match.end():]
+        if style_blocks:
+            return "".join(style_blocks) + answer_part
+        return answer_part
+    return html
+
+
 @dataclass
 class TextStyle:
     """Style attributes for a text segment."""
@@ -181,14 +237,21 @@ class StyledSegment:
     style: TextStyle = field(default_factory=TextStyle)
 
 
+# HTML void elements — self-closing tags that never have an end tag.
+_VOID_ELEMENTS = frozenset({
+    "area", "base", "br", "col", "embed", "hr", "img",
+    "input", "link", "meta", "param", "source", "track", "wbr",
+})
+
+
 class _HTMLToTextRenderer(HTMLParser):
     """HTMLParser-based renderer for terminal output."""
 
     # Block-level tags that should produce newlines
-    BLOCK_TAGS = {"br", "p", "div", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}
+    BLOCK_TAGS = {"br", "p", "div", "tr", "hr", "h1", "h2", "h3", "h4", "h5", "h6"}
 
     # Tags whose content should be skipped entirely
-    SKIP_TAGS = {"style", "script", "button"}
+    SKIP_TAGS = {"script", "button"}
 
     # Void elements (self-closing) that should be ignored
     # These don't have closing tags, so we just skip them without tracking depth
@@ -229,8 +292,10 @@ class _HTMLToTextRenderer(HTMLParser):
         # Style tracking (for styled output)
         self._segments: list[StyledSegment] = []
         self._style_stack: list[TextStyle] = [TextStyle()]  # Current style at top
-        # Track tags that were hidden (for proper closing)
-        self._hidden_tag_stack: list[str] = []
+        # CSS class parsing state
+        self._css_classes: dict[str, dict[str, str]] = {}
+        self._in_style_tag: bool = False
+        self._style_content: str = ""
 
     def _current_style(self) -> TextStyle:
         """Get the current style from the stack."""
@@ -271,6 +336,29 @@ class _HTMLToTextRenderer(HTMLParser):
                 return True
         return False
 
+    def _is_display_none(self, attrs: list[tuple[str, str | None]]) -> bool:
+        """Check if an element has display:none via CSS class or inline style."""
+        attrs_dict = dict(attrs)
+        # Check inline style
+        style_str = attrs_dict.get("style", "") or ""
+        if style_str:
+            inline = self._parse_inline_style(style_str)
+            if inline.get("display") == "none":
+                return True
+        # Check CSS class-based display
+        class_attr = attrs_dict.get("class", "") or ""
+        for cls in class_attr.split():
+            props = self._css_classes.get(cls, {})
+            if props.get("display") == "none":
+                return True
+        # Check ID-based display
+        id_attr = attrs_dict.get("id", "") or ""
+        if id_attr:
+            props = self._css_classes.get(id_attr, {})
+            if props.get("display") == "none":
+                return True
+        return False
+
     def _parse_inline_style(self, style_str: str) -> dict[str, str]:
         """Parse inline CSS style attribute into a dict."""
         styles: dict[str, str] = {}
@@ -282,44 +370,142 @@ class _HTMLToTextRenderer(HTMLParser):
                 styles[key.strip().lower()] = value.strip()
         return styles
 
-    def _apply_inline_styles(self, attrs: list[tuple[str, str | None]]) -> dict[str, Any]:
-        """Extract style changes from inline CSS."""
-        attrs_dict = dict(attrs)
-        style_str = attrs_dict.get("style", "") or ""
-        styles = self._parse_inline_style(style_str)
+    @staticmethod
+    def _parse_css_classes(css_text: str) -> dict[str, dict[str, str]]:
+        """Parse CSS class rules from a ``<style>`` block.
 
+        Handles simple selectors (``.classname``), comma-grouped selectors
+        (``.card, .note``), and ID selectors (``#extra``).  Compound /
+        descendant selectors like ``.nightMode .cloze`` are skipped to
+        avoid incorrect style application.
+        """
+        result: dict[str, dict[str, str]] = {}
+        # Strip CSS comments before parsing to avoid them polluting selectors
+        css_text = re.sub(r"/\*.*?\*/", "", css_text, flags=re.DOTALL)
+        # Match selector(s) followed by { properties }
+        rule_pattern = re.compile(r"([^{}]+)\{([^}]*)\}", re.DOTALL)
+        for match in rule_pattern.finditer(css_text):
+            selector_text = match.group(1).strip()
+            props_str = match.group(2)
+
+            # Parse properties
+            props: dict[str, str] = {}
+            for part in props_str.split(";"):
+                if ":" in part:
+                    key, value = part.split(":", 1)
+                    key = key.strip().lower()
+                    value = value.strip()
+                    if value.endswith("!important"):
+                        value = value[: -len("!important")].strip()
+                    if key and value:
+                        props[key] = value
+            if not props:
+                continue
+
+            # Process each comma-separated selector individually
+            for selector in selector_text.split(","):
+                selector = selector.strip()
+                # Skip compound/descendant selectors (contain spaces)
+                if " " in selector:
+                    continue
+                # Match .classname or #id (simple selectors only)
+                class_match = re.match(r"^\.([a-zA-Z_][\w-]*)$", selector)
+                id_match = re.match(r"^#([a-zA-Z_][\w-]*)$", selector)
+                name = None
+                if class_match:
+                    name = class_match.group(1)
+                elif id_match:
+                    name = id_match.group(1)
+                if name:
+                    if name in result:
+                        result[name].update(props)
+                    else:
+                        result[name] = dict(props)
+        return result
+
+    def _get_class_styles(self, attrs: list[tuple[str, str | None]]) -> dict[str, Any]:
+        """Look up CSS class and ID based style changes for an element."""
+        if not self._css_classes:
+            return {}
+
+        attrs_dict = dict(attrs)
+        class_attr = attrs_dict.get("class", "") or ""
+        class_names = class_attr.split()
+        id_attr = attrs_dict.get("id", "") or ""
+
+        if not class_names and not id_attr:
+            return {}
+
+        # Merge properties from all matching classes and IDs
+        merged: dict[str, str] = {}
+        for cls in class_names:
+            if cls in self._css_classes:
+                merged.update(self._css_classes[cls])
+        if id_attr and id_attr in self._css_classes:
+            merged.update(self._css_classes[id_attr])
+
+        if not merged:
+            return {}
+
+        return self._css_props_to_changes(merged)
+
+    @staticmethod
+    def _css_props_to_changes(styles: dict[str, str]) -> dict[str, Any]:
+        """Convert a CSS property dict to a style-changes dict."""
         changes: dict[str, Any] = {}
 
-        # font-weight
         if styles.get("font-weight") in ("bold", "700", "800", "900"):
             changes["bold"] = True
 
-        # font-style
         if styles.get("font-style") == "italic":
             changes["italic"] = True
 
-        # text-decoration
         text_dec = styles.get("text-decoration", "")
         if "underline" in text_dec:
             changes["underline"] = True
         if "line-through" in text_dec:
             changes["strikethrough"] = True
 
-        # color
         color = styles.get("color")
         if color:
             changes["color"] = color
 
-        # background-color
         bgcolor = styles.get("background-color") or styles.get("background")
         if bgcolor:
             changes["bgcolor"] = bgcolor
 
         return changes
 
+    def _apply_inline_styles(self, attrs: list[tuple[str, str | None]]) -> dict[str, Any]:
+        """Extract style changes from CSS classes and inline styles.
+
+        Class-based styles are applied first, then inline styles override
+        (matching CSS specificity rules).
+        """
+        # Start with class-based styles
+        changes = self._get_class_styles(attrs)
+
+        # Overlay inline styles (higher specificity)
+        attrs_dict = dict(attrs)
+        style_str = attrs_dict.get("style", "") or ""
+        styles = self._parse_inline_style(style_str)
+
+        if styles:
+            inline_changes = self._css_props_to_changes(styles)
+            changes.update(inline_changes)
+
+        return changes
+
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         # Skip void elements entirely (no depth tracking needed)
         if tag in self.VOID_SKIP_TAGS:
+            return
+
+        # Style tag: capture content for CSS class extraction
+        if tag == "style":
+            self._skip_depth += 1
+            self._in_style_tag = True
+            self._style_content = ""
             return
 
         if tag in self.SKIP_TAGS:
@@ -332,10 +518,13 @@ class _HTMLToTextRenderer(HTMLParser):
         # Check for hidden attribute on hideable tags
         if tag in self.HIDEABLE_TAGS and self._has_hidden_attr(attrs):
             self._hidden_depth += 1
-            self._hidden_tag_stack.append(tag)
             return
 
         if self._hidden_depth > 0:
+            # Track nesting depth so we exit hidden at the right </tag>.
+            # Void elements never produce end tags, so don't count them.
+            if tag not in _VOID_ELEMENTS:
+                self._hidden_depth += 1
             return
 
         # Cloze span handling - must come before general span handling
@@ -410,11 +599,40 @@ class _HTMLToTextRenderer(HTMLParser):
                 self._append_styled(f"[image: {filename}]")
             return
 
-        # Block tags produce newlines
+        # HR renders as a visible separator line (void element, no endtag)
+        if tag == "hr":
+            self._append_styled("\n---\n")
+            return
+
+        # div and p: block newline + style support (CSS classes / inline styles)
+        if tag in ("div", "p"):
+            # Check for display:none from CSS classes or inline styles
+            if self._is_display_none(attrs):
+                self._hidden_depth += 1
+                return
+            self._append_styled("\n")
+            style_changes = self._apply_inline_styles(attrs)
+            if style_changes:
+                self._push_style(**style_changes)
+            else:
+                self._push_style()  # Maintain stack balance
+            return
+
+        # Remaining block tags produce newlines
         if tag in self.BLOCK_TAGS:
             self._append_styled("\n")
 
     def handle_endtag(self, tag: str) -> None:
+        # Style tag: parse accumulated CSS before closing
+        if tag == "style":
+            if self._skip_depth > 0:
+                self._skip_depth -= 1
+            if self._in_style_tag:
+                self._in_style_tag = False
+                self._css_classes.update(self._parse_css_classes(self._style_content))
+                self._style_content = ""
+            return
+
         if tag in self.SKIP_TAGS:
             if self._skip_depth > 0:
                 self._skip_depth -= 1
@@ -425,9 +643,7 @@ class _HTMLToTextRenderer(HTMLParser):
 
         # Check if we're closing a hidden element
         if self._hidden_depth > 0:
-            if self._hidden_tag_stack and self._hidden_tag_stack[-1] == tag:
-                self._hidden_depth -= 1
-                self._hidden_tag_stack.pop()
+            self._hidden_depth -= 1
             return
 
         # Cloze span end handling - must come before general span handling
@@ -493,11 +709,22 @@ class _HTMLToTextRenderer(HTMLParser):
             self._append_styled("\n")
             return
 
-        # Block tags produce trailing newlines
-        if tag in {"p", "div", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}:
+        # div and p: trailing newline + pop style
+        if tag in ("div", "p"):
+            self._append_styled("\n")
+            self._pop_style()
+            return
+
+        # Other block tags produce trailing newlines
+        if tag in {"tr", "h1", "h2", "h3", "h4", "h5", "h6"}:
             self._append_styled("\n")
 
     def handle_data(self, data: str) -> None:
+        # Accumulate style tag content for CSS class parsing
+        if self._in_style_tag:
+            self._style_content += data
+            return
+
         if self._skip_depth > 0:
             return
         if self._hidden_depth > 0:
@@ -666,6 +893,10 @@ def render_html_to_text(
     if not html:
         return ""
 
+    # Strip duplicated FrontSide content from answer HTML
+    if mode == RenderMode.ANSWER:
+        html = _strip_front_side_from_answer(html)
+
     # Process Cloze Overlapping cards by unhiding the relevant content div
     # This must happen BEFORE other processing since the content is in hidden divs
     html = _process_cloze_overlapping_html(html, mode)
@@ -680,7 +911,7 @@ def render_html_to_text(
     text = renderer.get_text()
 
     # Decode HTML entities
-    text = unescape(text)
+    text = _safe_unescape(text)
 
     # Process media tags (Anki-specific formats)
     text = _process_media_tags(text)
@@ -963,6 +1194,10 @@ def render_html_to_styled_segments(
     if not html:
         return []
 
+    # Strip duplicated FrontSide content from answer HTML
+    if mode == RenderMode.ANSWER:
+        html = _strip_front_side_from_answer(html)
+
     # Process Cloze Overlapping cards by unhiding the relevant content div
     # This must happen BEFORE other processing since the content is in hidden divs
     html = _process_cloze_overlapping_html(html, mode)
@@ -979,7 +1214,7 @@ def render_html_to_styled_segments(
     # Process media tags in each segment
     processed: list[StyledSegment] = []
     for seg in segments:
-        text = unescape(seg.text)
+        text = _safe_unescape(seg.text)
         text = _process_media_tags(text)
         if text:
             processed.append(StyledSegment(text=text, style=seg.style))

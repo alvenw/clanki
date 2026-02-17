@@ -1,12 +1,11 @@
 """Tests for tui/render.py - TUI image placeholder parsing and textual-image rendering."""
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
 from rich.text import Text
 
 from clanki.render import RenderMode, StyledSegment, TextStyle
 from clanki.tui.render import (
+    ImageMarker,
     ImagePlaceholder,
     _create_image_renderable,
     _segment_to_rich_style,
@@ -97,34 +96,14 @@ class TestCreateImageRenderable:
         result = _create_image_renderable(Path("/nonexistent/image.png"))
         assert result is None
 
-    def test_creates_image_when_file_exists(self, tmp_path):
-        """Should create an Image renderable when file exists."""
-        # Create a minimal valid image file (1x1 PNG)
-        image_path = tmp_path / "test.png"
-        # Write a minimal valid 1x1 PNG file
-        png_data = (
-            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
-            b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00"
-            b"\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
-        )
-        image_path.write_bytes(png_data)
-
-        with patch("clanki.tui.render.Image") as mock_image:
-            mock_instance = MagicMock()
-            mock_image.return_value = mock_instance
-            result = _create_image_renderable(image_path, max_width=40, max_height=20)
-
-            mock_image.assert_called_once_with(image_path, width=40, height=20)
-            assert result == mock_instance
-
-    def test_returns_none_on_exception(self, tmp_path):
-        """Should return None if Image creation raises an exception."""
+    def test_creates_image_marker_when_file_exists(self, tmp_path):
+        """Should create an ImageMarker when file exists."""
         image_path = tmp_path / "test.png"
         image_path.touch()
 
-        with patch("clanki.tui.render.Image", side_effect=Exception("Test error")):
-            result = _create_image_renderable(image_path)
-            assert result is None
+        result = _create_image_renderable(image_path, max_width=40, max_height=20)
+        assert isinstance(result, ImageMarker)
+        assert result.path == image_path
 
 
 class TestRenderContentWithImages:
@@ -176,20 +155,18 @@ class TestRenderContentWithImages:
         # Placeholder should be exactly preserved
         assert str(result[0]) == "[image: nonexistent.jpg]"
 
-    def test_existing_file_creates_image_renderable(self, tmp_path):
-        """Existing image file should create Image renderable."""
+    def test_existing_file_creates_image_marker(self, tmp_path):
+        """Existing image file should create ImageMarker."""
         # Create a test image file
         image_path = tmp_path / "test.jpg"
         image_path.touch()
 
         text = "[image: test.jpg]"
-        with patch("clanki.tui.render._create_image_renderable") as mock_create:
-            mock_image = MagicMock()
-            mock_create.return_value = mock_image
-            result = render_content_with_images(text, tmp_path, images_enabled=True)
+        result = render_content_with_images(text, tmp_path, images_enabled=True)
 
-            assert len(result) == 1
-            assert result[0] == mock_image
+        assert len(result) == 1
+        assert isinstance(result[0], ImageMarker)
+        assert result[0].path == image_path
 
     def test_preserves_text_before_placeholder(self, tmp_path):
         """Text before placeholder should be preserved."""

@@ -60,6 +60,7 @@ class AppState:
     images_enabled: bool = True
     audio_enabled: bool = True
     audio_autoplay: bool = True
+    high_contrast: bool = False
     expanded_decks: set[int] = field(default_factory=set)
 
 
@@ -201,6 +202,7 @@ class ClankiApp(App[None]):
             images_enabled=images_enabled,
             audio_enabled=audio_enabled,
             audio_autoplay=audio_autoplay,
+            high_contrast=config.high_contrast,
             expanded_decks=config.expanded_decks.copy(),
         )
 
@@ -257,6 +259,7 @@ class ClankiApp(App[None]):
 
         config = load_config()
         config.expanded_decks = self._state.expanded_decks.copy()
+        config.high_contrast = self._state.high_contrast
         save_config(config)
 
 

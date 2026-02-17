@@ -49,6 +49,7 @@ class Config:
     images_enabled: bool = True
     audio_enabled: bool = True
     audio_autoplay: bool = True
+    high_contrast: bool = False
     expanded_decks: set[int] = field(default_factory=set)
 
     def to_dict(self) -> dict[str, Any]:
@@ -57,6 +58,7 @@ class Config:
             "images_enabled": self.images_enabled,
             "audio_enabled": self.audio_enabled,
             "audio_autoplay": self.audio_autoplay,
+            "high_contrast": self.high_contrast,
             "expanded_decks": list(self.expanded_decks),
         }
 
@@ -68,6 +70,7 @@ class Config:
             images_enabled=data.get("images_enabled", True),
             audio_enabled=data.get("audio_enabled", True),
             audio_autoplay=data.get("audio_autoplay", True),
+            high_contrast=data.get("high_contrast", False),
             expanded_decks=set(expanded) if isinstance(expanded, list) else set(),
         )
 
