@@ -66,15 +66,13 @@ HEAT_COLORS = [
     "#7ab4e5",  # high
     "#9adeff",  # very high
 ]
+C_FUTURE = "#1a1a24"  # Darker than empty — day hasn't happened yet
 
 
-def _section(title: str, icon: str = "", width: int = 44) -> str:
-    """Build a colored section header with horizontal rule and optional icon."""
+def _section(title: str, width: int = 44) -> str:
+    """Build a colored section header with horizontal rule."""
     rule = "\u2500"
-    if icon:
-        prefix = f"{rule}{rule} {icon} {title} "
-    else:
-        prefix = f"{rule}{rule} {title} "
+    prefix = f"{rule}{rule} {title} "
     fill = rule * max(0, width - len(prefix))
     return f"[bold {C_ACCENT}]{prefix}{fill}[/bold {C_ACCENT}]"
 
@@ -155,14 +153,13 @@ class ReviewHeatmap(Widget):
     DEFAULT_CSS = """
     ReviewHeatmap {
         height: auto;
-        padding: 0 2;
     }
     """
 
     ROWS = 7  # days of week
     COLS = 4  # weeks
-    CELL_W = 3  # "██ " display width per cell
-    LABEL_W = 6  # "  Mon " prefix width before first cell
+    CELL_W = 2  # "██" display width per cell (no gap)
+    LABEL_W = 8  # "    Mon " prefix width (4 spaces + 3 char name + 1 space)
 
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__(id=id)
@@ -175,7 +172,7 @@ class ReviewHeatmap(Widget):
         self._data = data
         self._max_count = max(data.values(), default=0)
         self._hover_info = ""
-        self.refresh()
+        self.refresh(layout=True)
 
     def _color_for(self, count: int) -> str:
         """Map a review count to a heatmap color."""
@@ -194,43 +191,43 @@ class ReviewHeatmap(Widget):
             return HEAT_COLORS[2]
         return HEAT_COLORS[1]
 
+    def _grid_start_offset(self) -> int:
+        """Offset from today to the Monday of 3 weeks ago (grid origin)."""
+        return -(datetime.now().weekday() + 21)
+
     def _offset(self, row: int, col: int) -> int:
-        """Day offset for a given grid position."""
-        return -27 + col * 7 + row
+        """Day offset (relative to today) for a given grid position."""
+        return self._grid_start_offset() + col * 7 + row
 
     def render(self) -> str:
-        """Render the 7×4 vertical heatmap grid."""
+        """Render the 7x4 vertical heatmap grid.
+
+        Rows are always Mon-Sun.  Columns are weeks (oldest left,
+        newest right).  Today lands at (today_weekday, 3).  Days after
+        today in the last column render as empty.
+        """
         block = "\u2588\u2588"
-        now = datetime.now()
-        start_date = now + timedelta(days=-27)
+        day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         lines: list[str] = []
 
-        # 7 rows (days of week) × 4 cols (weeks)
         for row in range(self.ROWS):
-            dt = start_date + timedelta(days=row)
-            day_name = dt.strftime("%a")
-            line = f"  [{C_DIM}]{day_name}[/{C_DIM}] "
+            line = f"    [{C_DIM}]{day_names[row]}[/{C_DIM}] "
             for col in range(self.COLS):
                 offset = self._offset(row, col)
-                count = self._data.get(offset, 0)
-                color = self._color_for(count)
-                line += f"[{color}]{block}[/{color}] "
+                if offset > 0:
+                    # Future day — visually distinct from "0 reviews"
+                    line += f"[{C_FUTURE}]{block}[/{C_FUTURE}]"
+                else:
+                    count = self._data.get(offset, 0)
+                    color = self._color_for(count)
+                    line += f"[{color}]{block}[/{color}]"
             lines.append(line)
-
-        # Week start dates beneath columns
-        lbl_line = "      "  # align past day labels
-        for col in range(self.COLS):
-            offset = -27 + col * 7
-            dt = now + timedelta(days=offset)
-            lbl = dt.strftime("%d")
-            lbl_line += f"[{C_DIM}]{lbl:<3s}[/{C_DIM}]"
-        lines.append(lbl_line)
 
         # Hover info (always present to keep height stable)
         if self._hover_info:
-            lines.append(f"  {self._hover_info}")
+            lines.append(f"    {self._hover_info}")
         else:
-            lines.append(f"  [{C_DIM}]hover for details[/{C_DIM}]")
+            lines.append(f"    [{C_DIM}]hover for details[/{C_DIM}]")
 
         return "\n".join(lines)
 
@@ -251,6 +248,13 @@ class ReviewHeatmap(Widget):
             return
 
         offset = self._offset(row, col)
+        if offset > 0:
+            # Future day — no info to show
+            if self._hover_info:
+                self._hover_info = ""
+                self.refresh()
+            return
+
         count = self._data.get(offset, 0)
         dt = datetime.now() + timedelta(days=offset)
         date_str = dt.strftime("%a %b %d")
@@ -280,14 +284,13 @@ class ForecastChart(Widget):
     DEFAULT_CSS = """
     ForecastChart {
         height: auto;
-        padding: 0 2;
     }
     """
 
     # Bar height in rows (excluding label row and hover row)
     BAR_HEIGHT = 6
     COL_W = 7  # width per column: "Thu 18 " = 7 chars
-    INDENT = 2  # leading spaces
+    INDENT = 4  # leading spaces (visual indent in rendered content)
 
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__(id=id)
@@ -307,16 +310,18 @@ class ForecastChart(Widget):
         self._labels = labels
         self._max_count = max(counts, default=0)
         self._hover_info = ""
-        self.refresh()
+        self.refresh(layout=True)
 
     def render(self) -> str:
         """Render vertical bar chart with labels and hover."""
         lines: list[str] = []
         block = "\u2588\u2588"
 
+        indent = " " * self.INDENT
+
         if self._max_count == 0:
             # No data — show placeholder
-            lines.append(f"  [{C_DIM}]No upcoming reviews[/{C_DIM}]")
+            lines.append(f"{indent}[{C_DIM}]No upcoming reviews[/{C_DIM}]")
             lines.append("")
             return "\n".join(lines)
 
@@ -327,7 +332,7 @@ class ForecastChart(Widget):
 
         # Build bar columns (bottom-up, rendered top-down)
         for row in range(self.BAR_HEIGHT, 0, -1):
-            line = "  "
+            line = indent
             threshold = row / self.BAR_HEIGHT
             for i in range(7):
                 ratio = self._counts[i] / self._max_count if self._max_count > 0 else 0
@@ -344,16 +349,15 @@ class ForecastChart(Widget):
             lines.append(line)
 
         # Count labels under each bar
-        count_line = "  "
+        count_line = indent
         for i in range(7):
             cnt_str = str(self._counts[i])
-            # Center the count under the 2-char bar, pad to COL_W
             padded = cnt_str.center(self.COL_W)
             count_line += f"[{C_BRIGHT}]{padded}[/{C_BRIGHT}]"
         lines.append(count_line)
 
         # Day labels: "Thu 18" style
-        label_line = "  "
+        label_line = indent
         for i in range(7):
             padded = self._labels[i].center(self.COL_W)
             label_line += f"[{C_DIM}]{padded}[/{C_DIM}]"
@@ -361,9 +365,9 @@ class ForecastChart(Widget):
 
         # Hover info
         if self._hover_info:
-            lines.append(f"  {self._hover_info}")
+            lines.append(f"{indent}{self._hover_info}")
         else:
-            lines.append(f"  [{C_DIM}]hover for details[/{C_DIM}]")
+            lines.append(f"{indent}[{C_DIM}]hover for details[/{C_DIM}]")
 
         return "\n".join(lines)
 
@@ -469,9 +473,12 @@ class StatsScreen(Screen[None]):
     def _refresh_stats(self) -> None:
         col = self.clanki_app.state.col
         if col is None:
-            self.query_one("#stats-content", Static).update(
-                f"[{C_DIM}]Collection not open.[/{C_DIM}]"
-            )
+            try:
+                self.query_one("#stats-content", Static).update(
+                    f"[{C_DIM}]Collection not open.[/{C_DIM}]"
+                )
+            except Exception:
+                pass
             return
 
         deck_ids: list[int] | None = None
@@ -481,7 +488,6 @@ class StatsScreen(Screen[None]):
                 deck_ids = None
 
         did = _did_filter(deck_ids)
-        did_cards = _did_filter(deck_ids, "cards")
 
         try:
             cutoff = col.sched.day_cutoff
@@ -490,27 +496,51 @@ class StatsScreen(Screen[None]):
             cutoff = int(time.time())
             today = 0
 
-        # Top stats: Today through Retention + section headers
-        top_lines = self._build_top_stats(col, deck_ids, did, cutoff, today)
-        self.query_one("#stats-content", Static).update("\n".join(top_lines))
+        # Each section is independently error-handled so one failure
+        # doesn't prevent the rest of the screen from updating.
 
-        # Forecast chart data
-        forecast_counts, forecast_labels = self._build_forecast_data(col, today, deck_ids)
-        self.query_one("#forecast-chart", ForecastChart).set_data(forecast_counts, forecast_labels)
+        try:
+            top_lines = self._build_top_stats(col, deck_ids, did, cutoff, today)
+            w = self.query_one("#stats-content", Static)
+            w.update("\n".join(top_lines))
+            w.refresh(layout=True)
+        except Exception:
+            pass
 
-        # Mid section: Reviews header above heatmap
-        mid_lines = self._build_bottom_stats(col, cutoff, did, did_cards, deck_ids)
-        self.query_one("#stats-mid", Static).update("\n".join(mid_lines))
+        try:
+            forecast_counts, forecast_labels = self._build_forecast_data(col, today, deck_ids)
+            self.query_one("#forecast-chart", ForecastChart).set_data(
+                forecast_counts, forecast_labels
+            )
+        except Exception:
+            pass
 
-        # Heatmap data
-        heatmap_data = self._build_heatmap_data(col, cutoff, did)
-        self.query_one("#review-heatmap", ReviewHeatmap).set_data(heatmap_data)
+        try:
+            mid_lines = self._build_bottom_stats()
+            w = self.query_one("#stats-mid", Static)
+            w.update("\n".join(mid_lines))
+            w.refresh(layout=True)
+        except Exception:
+            pass
 
-        # Bottom stats: Growth
-        growth_lines = self._build_after_heatmap_stats(col, cutoff, did, did_cards, deck_ids)
-        self.query_one("#stats-bottom", Static).update("\n".join(growth_lines))
+        try:
+            heatmap_data = self._build_heatmap_data(col, cutoff, did)
+            self.query_one("#review-heatmap", ReviewHeatmap).set_data(heatmap_data)
+        except Exception:
+            pass
 
-        self.query_one("#stats-header", Static).update(self._scope_label())
+        try:
+            growth_lines = self._build_after_heatmap_stats(col, did, deck_ids)
+            w = self.query_one("#stats-bottom", Static)
+            w.update("\n".join(growth_lines))
+            w.refresh(layout=True)
+        except Exception:
+            pass
+
+        try:
+            self.query_one("#stats-header", Static).update(self._scope_label())
+        except Exception:
+            pass
 
     def _build_top_stats(
         self,
@@ -524,31 +554,31 @@ class StatsScreen(Screen[None]):
         lines: list[str] = []
 
         lines.append("")
-        lines.append(_section("Today", "\u25c6"))
+        lines.append(_section("Today"))
         lines.extend(self._today_stats(col, cutoff, did))
 
         lines.append("")
-        lines.append(_section("Session", "\u25b8"))
+        lines.append(_section("Session"))
         lines.extend(self._session_stats())
 
         lines.append("")
-        lines.append(_section("Streaks", "\u25cf"))
+        lines.append(_section("Streaks"))
         lines.extend(self._streak_stats(col, cutoff, did))
 
         lines.append("")
-        lines.append(_section("Due", "\u25c7"))
+        lines.append(_section("Due"))
         lines.extend(self._due_stats(col, today, deck_ids))
 
         lines.append("")
-        lines.append(_section("Card States", "\u25a0"))
+        lines.append(_section("Card States"))
         lines.extend(self._card_state_stats(col, deck_ids))
 
         lines.append("")
-        lines.append(_section("Retention", "\u25ce"))
+        lines.append(_section("Retention"))
         lines.extend(self._retention_stats(col, did))
 
         lines.append("")
-        lines.append(_section("Forecast", "\u25b2"))
+        lines.append(_section("Forecast"))
 
         return lines
 
@@ -614,36 +644,22 @@ class StatsScreen(Screen[None]):
 
         return counts, labels
 
-    def _build_bottom_stats(
-        self,
-        col: "Collection",
-        cutoff: int,
-        did: str,
-        did_cards: str,
-        deck_ids: list[int] | None,
-    ) -> list[str]:
-        """Build stat lines for sections below the heatmap."""
-        lines: list[str] = []
-
-        lines.append("")
-        lines.append(_section("Reviews (28 days)", "\u25a3"))
-
-        return lines
+    def _build_bottom_stats(self) -> list[str]:
+        """Build the Reviews section header above the heatmap."""
+        return ["", _section("Reviews (28 days)")]
 
     def _build_after_heatmap_stats(
         self,
         col: "Collection",
-        cutoff: int,
         did: str,
-        did_cards: str,
         deck_ids: list[int] | None,
     ) -> list[str]:
         """Build stat lines that appear after the heatmap."""
         lines: list[str] = []
 
         lines.append("")
-        lines.append(_section("Growth (30 days)", "\u25b3"))
-        lines.extend(self._growth_stats(col, cutoff, did, did_cards, deck_ids))
+        lines.append(_section("Growth (30 days)"))
+        lines.extend(self._growth_stats(col, did, deck_ids))
         lines.append("")
 
         return lines
@@ -937,9 +953,7 @@ class StatsScreen(Screen[None]):
     def _growth_stats(
         self,
         col: "Collection",
-        cutoff: int,
         did: str,
-        did_cards: str,
         deck_ids: list[int] | None,
     ) -> list[str]:
         lines: list[str] = []
