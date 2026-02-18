@@ -106,6 +106,17 @@ class TestRenderHtmlToStyledSegments:
         assert "[...]" in combined_text
         assert "answer text" not in combined_text
 
+    def test_cloze_question_mode_shows_hint(self):
+        """Cloze hint text should be preserved instead of [...] placeholder."""
+        # Anki renders {{c1::answer::hint}} as <span class="cloze">[hint]</span>
+        segments = render_html_to_styled_segments(
+            '<span class="cloze">[a type of atopy]</span>',
+            mode=RenderMode.QUESTION,
+        )
+        combined_text = "".join(s.text for s in segments)
+        assert "[a type of atopy]" in combined_text
+        assert "[...]" not in combined_text
+
     def test_cloze_answer_mode_shows_content(self):
         """Cloze in ANSWER mode should show actual content."""
         segments = render_html_to_styled_segments(
@@ -371,7 +382,7 @@ class TestParseImagePlaceholders:
 
         assert len(result) == 1
         # Extract using positions should give original placeholder
-        extracted = text[result[0].start:result[0].end]
+        extracted = text[result[0].start : result[0].end]
         assert extracted == "[image: test.jpg]"
 
 

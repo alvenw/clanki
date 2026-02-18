@@ -33,7 +33,10 @@ class StatsBar(Static):
 
     def _refresh_display(self) -> None:
         """Refresh the displayed statistics."""
-        text = f"Session stats  Due: {self._due}  Reviewed: {self._reviewed}"
+        text = (
+            f"[dim]Due:[/dim] [bold]{self._due}[/bold]  "
+            f"[dim]Reviewed:[/dim] [bold]{self._reviewed}[/bold]"
+        )
         self.update(text)
 
 

@@ -42,26 +42,33 @@ class DoneScreen(Screen[None]):
     def compose(self) -> ComposeResult:
         stats = self.clanki_app.state.stats
 
+        # Build color-coded ratings breakdown
+        ratings_line = (
+            f"  [bold #e96c6c]Again[/bold #e96c6c] {stats.again_count}    "
+            f"[bold #e0c55a]Hard[/bold #e0c55a] {stats.hard_count}    "
+            f"[bold #6cd97e]Good[/bold #6cd97e] {stats.good_count}    "
+            f"[bold #5eb5f7]Easy[/bold #5eb5f7] {stats.easy_count}"
+        )
+
         yield Center(
             Vertical(
                 Static(
-                    "[bold green]Review Complete![/bold green]",
+                    "[bold #6cd97e]\u2714 Review Complete[/bold #6cd97e]",
                     id="done-title",
                     markup=True,
                 ),
                 Static(""),
-                Static(f"[bold]{self._deck_name}[/bold]", markup=True),
-                Static(""),
-                Static(f"Cards reviewed: [bold]{stats.reviewed}[/bold]", markup=True),
-                Static(""),
-                Static("[dim]Ratings breakdown:[/dim]", markup=True),
-                Static(f"  Again (1): {stats.again_count}"),
-                Static(f"  Hard  (2): {stats.hard_count}"),
-                Static(f"  Good  (3): {stats.good_count}"),
-                Static(f"  Easy  (4): {stats.easy_count}"),
+                Static(f"  [bold]{self._deck_name}[/bold]", markup=True),
                 Static(""),
                 Static(
-                    "[dim]Esc[/dim] Back to Decks  [dim]q[/dim] Quit",
+                    f"  Cards reviewed: [bold]{stats.reviewed}[/bold]",
+                    markup=True,
+                ),
+                Static(""),
+                Static(ratings_line, markup=True),
+                Static(""),
+                Static(
+                    "  [dim]Esc[/dim] Back to Decks    [dim]q[/dim] Quit",
                     markup=True,
                 ),
                 classes="done-stats",

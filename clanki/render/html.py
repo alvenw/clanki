@@ -54,8 +54,8 @@ CLOZE_PATTERN = re.compile(r'<span[^>]*class="[^"]*cloze[^"]*"[^>]*>', re.IGNORE
 # Groups: (1) cloze number, (2) answer text (may contain HTML), (3) optional hint
 # Uses non-greedy matching to handle nested content properly.
 RAW_CLOZE_PATTERN = re.compile(
-    r'\{\{c(\d+)::(.*?)(?:::(.*?))?\}\}',
-    re.DOTALL  # Allow . to match newlines
+    r"\{\{c(\d+)::(.*?)(?:::(.*?))?\}\}",
+    re.DOTALL,  # Allow . to match newlines
 )
 
 
@@ -95,7 +95,7 @@ def _process_raw_cloze_in_html(html: str, mode: RenderMode) -> str:
         if mode == RenderMode.QUESTION:
             # In question mode, show hint if available, otherwise [...]
             # Strip HTML from hint for cleaner display
-            hint_text = re.sub(r'<[^>]+>', '', hint) if hint else None
+            hint_text = re.sub(r"<[^>]+>", "", hint) if hint else None
             if hint_text:
                 return f"[{hint_text}]"
             return "[...]"
@@ -112,12 +112,10 @@ def _process_raw_cloze_in_html(html: str, mode: RenderMode) -> str:
 # Question side: <div id="cloze-anki-rendered" hidden="">...</div>
 # We need to "unhide" the relevant div while keeping the rest of the HTML intact
 CLOZE_BACK_TAG_PATTERN = re.compile(
-    r'(<div[^>]*id=["\']cloze-is-back["\'][^>]*)\s+hidden(?:="[^"]*")?([^>]*>)',
-    re.IGNORECASE
+    r'(<div[^>]*id=["\']cloze-is-back["\'][^>]*)\s+hidden(?:="[^"]*")?([^>]*>)', re.IGNORECASE
 )
 CLOZE_RENDERED_TAG_PATTERN = re.compile(
-    r'(<div[^>]*id=["\']cloze-anki-rendered["\'][^>]*)\s+hidden(?:="[^"]*")?([^>]*>)',
-    re.IGNORECASE
+    r'(<div[^>]*id=["\']cloze-anki-rendered["\'][^>]*)\s+hidden(?:="[^"]*")?([^>]*>)', re.IGNORECASE
 )
 
 
@@ -142,12 +140,12 @@ def _process_cloze_overlapping_html(html: str, mode: RenderMode) -> str:
     """
     if mode == RenderMode.ANSWER:
         # Unhide cloze-is-back div (answer content)
-        result = CLOZE_BACK_TAG_PATTERN.sub(r'\1\2', html)
+        result = CLOZE_BACK_TAG_PATTERN.sub(r"\1\2", html)
         if result != html:
             return result
     else:
         # Unhide cloze-anki-rendered div (question content)
-        result = CLOZE_RENDERED_TAG_PATTERN.sub(r'\1\2', html)
+        result = CLOZE_RENDERED_TAG_PATTERN.sub(r"\1\2", html)
         if result != html:
             return result
     return html
@@ -162,7 +160,7 @@ _HR_ID_ANSWER_PATTERN = re.compile(
 )
 
 _STYLE_BLOCK_PATTERN = re.compile(
-    r'(<style[^>]*>.*?</style\s*>)',
+    r"(<style[^>]*>.*?</style\s*>)",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -183,9 +181,13 @@ def _strip_front_side_from_answer(html: str) -> str:
     match = _HR_ID_ANSWER_PATTERN.search(html)
     if match:
         # Preserve <style> blocks from the stripped portion
-        stripped_part = html[:match.start()]
+        stripped_part = html[: match.start()]
         style_blocks = _STYLE_BLOCK_PATTERN.findall(stripped_part)
-        answer_part = html[match.end():]
+        answer_part = html[match.end() :]
+        # If answer portion is empty/whitespace, return original HTML
+        # to avoid showing a blank card
+        if not answer_part.strip():
+            return html
         if style_blocks:
             return "".join(style_blocks) + answer_part
         return answer_part
@@ -238,10 +240,24 @@ class StyledSegment:
 
 
 # HTML void elements — self-closing tags that never have an end tag.
-_VOID_ELEMENTS = frozenset({
-    "area", "base", "br", "col", "embed", "hr", "img",
-    "input", "link", "meta", "param", "source", "track", "wbr",
-})
+_VOID_ELEMENTS = frozenset(
+    {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
+)
 
 
 class _HTMLToTextRenderer(HTMLParser):
@@ -650,8 +666,17 @@ class _HTMLToTextRenderer(HTMLParser):
         if tag == "span" and self._in_cloze:
             self._in_cloze = False
             if self._mode == RenderMode.QUESTION:
-                # In question mode, show placeholder
-                self._append_styled("[...]")
+                # Anki's question-side HTML wraps placeholders in brackets:
+                #   - No hint:  <span class="cloze">[...]</span>
+                #   - With hint: <span class="cloze">[hint text]</span>
+                # Answer-side has bare text: <span class="cloze">Paris</span>
+                # Pass through bracketed content (preserves hints);
+                # replace bare answer text with "[...]".
+                text = self._cloze_content.strip()
+                if text.startswith("[") and text.endswith("]"):
+                    self._append_styled(text)
+                else:
+                    self._append_styled("[...]")
             else:
                 # In answer mode, show the cloze content (already accumulated)
                 self._append_styled(self._cloze_content)
@@ -957,9 +982,7 @@ def _normalize_segments(segments: list[StyledSegment]) -> list[StyledSegment]:
         # Handle pure newlines specially
         if text == "\n":
             if result and result[-1].style == seg.style:
-                result[-1] = StyledSegment(
-                    text=result[-1].text + "\n", style=seg.style
-                )
+                result[-1] = StyledSegment(text=result[-1].text + "\n", style=seg.style)
             else:
                 result.append(StyledSegment(text="\n", style=seg.style))
             continue
@@ -972,9 +995,7 @@ def _normalize_segments(segments: list[StyledSegment]) -> list[StyledSegment]:
             if text.strip() == "" and text:
                 # Add space to previous segment
                 if result:
-                    result[-1] = StyledSegment(
-                        text=result[-1].text + " ", style=result[-1].style
-                    )
+                    result[-1] = StyledSegment(text=result[-1].text + " ", style=result[-1].style)
             continue
 
         # Determine if we need to add a leading space
@@ -999,9 +1020,7 @@ def _normalize_segments(segments: list[StyledSegment]) -> list[StyledSegment]:
 
         # Merge with previous segment if same style
         if result and result[-1].style == seg.style:
-            result[-1] = StyledSegment(
-                text=result[-1].text + normalized, style=seg.style
-            )
+            result[-1] = StyledSegment(text=result[-1].text + normalized, style=seg.style)
         else:
             result.append(StyledSegment(text=normalized, style=seg.style))
 
@@ -1156,9 +1175,7 @@ def _filter_tag_segments(segments: list[StyledSegment]) -> list[StyledSegment]:
         if not seg.text:
             continue
         if cleaned and cleaned[-1].style == seg.style:
-            cleaned[-1] = StyledSegment(
-                text=cleaned[-1].text + seg.text, style=seg.style
-            )
+            cleaned[-1] = StyledSegment(text=cleaned[-1].text + seg.text, style=seg.style)
         else:
             cleaned.append(seg)
 

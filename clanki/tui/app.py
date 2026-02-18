@@ -62,6 +62,7 @@ class AppState:
     audio_autoplay: bool = True
     high_contrast: bool = False
     expanded_decks: set[int] = field(default_factory=set)
+    stats_show_all: bool = True  # Remember All Decks vs per-deck in stats screen
 
 
 class ClankiApp(App[None]):
@@ -146,7 +147,7 @@ class ClankiApp(App[None]):
         width: 60;
         height: auto;
         border: solid $success;
-        padding: 2;
+        padding: 2 3;
     }
 
     .help-text {
@@ -165,6 +166,28 @@ class ClankiApp(App[None]):
         text-align: center;
         color: $text-muted;
         margin-bottom: 1;
+    }
+
+    /* Stats screen scroll area */
+    #stats-scroll {
+        height: 1fr;
+        min-height: 0;
+    }
+
+    #stats-content {
+        height: auto;
+        padding: 0 2;
+    }
+
+    #stats-mid {
+        height: auto;
+        padding: 0 2;
+        margin-top: 0;
+    }
+
+    #stats-bottom {
+        height: auto;
+        padding: 0 2;
     }
     """
 
@@ -210,6 +233,11 @@ class ClankiApp(App[None]):
     def state(self) -> AppState:
         """Get the shared application state."""
         return self._state
+
+    @property
+    def collection_path(self) -> Path:
+        """Get the collection file path."""
+        return self._collection_path
 
     async def on_mount(self) -> None:
         """Open collection and push initial screen on mount."""
