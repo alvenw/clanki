@@ -79,6 +79,13 @@ class MockRenderOutput:
     answer_text: str
     question_av_tags: list = field(default_factory=list)
     answer_av_tags: list = field(default_factory=list)
+    css: str = ""
+
+    def question_and_style(self) -> str:
+        return f"<style>{self.css}</style>{self.question_text}"
+
+    def answer_and_style(self) -> str:
+        return f"<style>{self.css}</style>{self.answer_text}"
 
 
 def create_mock_collection(deck_name: str = "Test Deck", deck_id: int = 1234):

@@ -53,6 +53,7 @@ def _build_pb_auth(auth: SyncAuth) -> PbSyncAuth:
     pb_auth = PbSyncAuth()
     pb_auth.hkey = auth.hkey
     pb_auth.endpoint = auth.endpoint
+    pb_auth.io_timeout_secs = 30
     return pb_auth
 
 

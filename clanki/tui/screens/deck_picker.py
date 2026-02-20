@@ -7,6 +7,7 @@ allowing users to select a deck to start a review session.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult
@@ -91,7 +92,6 @@ class DeckListItem(ListItem):
         self.is_expanded = is_expanded
 
     def compose(self) -> ComposeResult:
-        counts = self.node.format_counts()
         indent = "  " * self.node.depth
 
         # Toggle indicator for parent decks
@@ -100,8 +100,15 @@ class DeckListItem(ListItem):
         else:
             indicator = "  "
 
+        # Color-coded counts: new=blue, learn=red, review=green
+        colored_counts = (
+            f"[#5eb5f7]{self.node.new_count}[/#5eb5f7]/"
+            f"[#e96c6c]{self.node.learn_count}[/#e96c6c]/"
+            f"[#6cd97e]{self.node.review_count}[/#6cd97e]"
+        )
+
         yield Static(
-            f"{indent}{indicator}{self.node.leaf_name}  [dim]({counts})[/dim]",
+            f"{indent}{indicator}[bold]{self.node.leaf_name}[/bold]  [dim]({colored_counts})[/dim]",
             markup=True,
         )
 
@@ -115,6 +122,9 @@ class DeckPickerScreen(Screen[str]):
         Binding("k", "cursor_up", "Up", show=False),
         Binding("enter", "select_deck", "Select"),
         Binding("space", "toggle_expand", "Expand/Collapse", show=False),
+        Binding("c", "open_config", "Config", show=False),
+        Binding("t", "open_stats", "Stats", show=False),
+        Binding("s", "sync", "Sync", show=False),
     ]
 
     class DeckSelected(Message):
@@ -141,7 +151,8 @@ class DeckPickerScreen(Screen[str]):
         # Footer - full width, docked to bottom
         yield Static(
             "[dim]j/k[/dim] navigate  [dim]Space[/dim] expand/collapse  "
-            "[dim]Enter[/dim] select  [dim]q[/dim] quit",
+            "[dim]Enter[/dim] select  [dim]c[/dim] config  "
+            "[dim]t[/dim] stats  [dim]s[/dim] sync  [dim]q[/dim] quit",
             classes="help-text footer-bar",
             markup=True,
         )
@@ -166,6 +177,7 @@ class DeckPickerScreen(Screen[str]):
         list_view.focus()
 
         if self._visible_nodes:
+
             def init_highlight() -> None:
                 list_view.index = 0
 
@@ -373,3 +385,81 @@ class DeckPickerScreen(Screen[str]):
         from .review import ReviewScreen
 
         await self.app.push_screen(ReviewScreen(canonical_name))
+
+    async def action_open_config(self) -> None:
+        """Open the configuration screen."""
+        from .config_screen import ConfigScreen
+
+        await self.app.push_screen(ConfigScreen())
+
+    async def action_open_stats(self) -> None:
+        """Open the statistics screen, passing the highlighted deck if any."""
+        from .stats_screen import StatsScreen
+
+        deck_id: int | None = None
+        deck_name: str | None = None
+
+        list_view = self.query_one("#deck-list", ListView)
+        if list_view.highlighted_child is not None:
+            if isinstance(list_view.highlighted_child, DeckListItem):
+                node = list_view.highlighted_child.node
+                deck_id = node.deck_id
+                deck_name = node.name
+
+        await self.app.push_screen(StatsScreen(deck_id=deck_id, deck_name=deck_name))
+
+    async def action_sync(self) -> None:
+        """Sync collection with AnkiWeb."""
+        self.notify("Syncing...", severity="information")
+        self.run_worker(self._sync_worker(), exclusive=True)
+
+    async def _sync_worker(self) -> None:
+        """Worker coroutine that performs sync in background."""
+        from ...collection import close_collection, open_collection
+        from ...config import default_profile, resolve_anki_base
+        from ...sync import SyncResult, run_sync
+
+        app = self.clanki_app
+        collection_path = app.collection_path
+
+        # Close the current collection
+        if app.state.col is not None:
+            close_collection(app.state.col)
+            app.state.col = None
+
+        try:
+            # Resolve anki_base and profile
+            anki_base = resolve_anki_base()
+            profile = default_profile(anki_base)
+
+            if profile is None:
+                self.notify("No Anki profiles found", severity="error")
+                return
+
+            # Run sync (it opens/closes its own collection)
+            outcome = run_sync(
+                collection_path=collection_path,
+                anki_base=anki_base,
+                profile=profile,
+            )
+
+            if outcome.result == SyncResult.SUCCESS:
+                self.notify("Sync complete", severity="information")
+            elif outcome.result == SyncResult.NO_CHANGES:
+                self.notify("Already in sync", severity="information")
+            else:
+                self.notify(f"Sync: {outcome.message}", severity="error")
+        except Exception as exc:
+            self.notify(f"Sync failed: {exc}", severity="error")
+        finally:
+            # Reopen collection
+            try:
+                app.state.col = open_collection(collection_path)
+                app.state.media_dir = Path(app.state.col.media.dir())
+            except Exception as exc:
+                self.notify(f"Failed to reopen collection: {exc}", severity="error")
+
+            # Refresh deck list
+            self._load_decks()
+            self._update_list()
+            self.call_after_refresh(self._update_list_height)

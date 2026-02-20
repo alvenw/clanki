@@ -51,10 +51,33 @@ class ReviewScreen(Screen[None]):
         Binding("8", "play_audio_4", "Audio4", show=False),
         Binding("9", "play_audio_5", "Audio5", show=False),
         Binding("u", "undo", "Undo", show=False),
+        Binding("b", "bury_card", "Bury", show=False),
+        Binding("exclamation_mark", "suspend_card", "Suspend", show=False),
+        Binding("f", "cycle_flag", "Flag", show=False),
         Binding("i", "toggle_images", "Images", show=False),
         Binding("a", "replay_audio", "Audio", show=False),
         Binding("s", "toggle_audio", "Sound", show=False),
     ]
+
+    # Flag colors matching Anki Desktop
+    FLAG_COLORS: dict[int, str] = {
+        1: "#ff4040",  # Red
+        2: "#ff8c00",  # Orange
+        3: "#33cc33",  # Green
+        4: "#3399ff",  # Blue
+        5: "#ff69b4",  # Pink
+        6: "#00cccc",  # Turquoise
+        7: "#9966cc",  # Purple
+    }
+    FLAG_NAMES: dict[int, str] = {
+        1: "Red",
+        2: "Orange",
+        3: "Green",
+        4: "Blue",
+        5: "Pink",
+        6: "Turquoise",
+        7: "Purple",
+    }
 
     def __init__(self, deck_name: str) -> None:
         super().__init__()
@@ -63,6 +86,8 @@ class ReviewScreen(Screen[None]):
         self._current_card: CardView | None = None
         self._answer_revealed = False
         self._processing_action = False  # Guard against rapid key presses
+        self._current_flag: int = 0  # Current flag value (0-7)
+        self._last_action_was_flag: bool = False
 
     @property
     def clanki_app(self) -> ClankiApp:
@@ -76,6 +101,7 @@ class ReviewScreen(Screen[None]):
         # Get initial settings from app state
         media_dir = self.clanki_app.state.media_dir
         images_enabled = self.clanki_app.state.images_enabled
+        high_contrast = self.clanki_app.state.high_contrast
 
         # Footer - full width, docked to bottom
         yield Static(
@@ -98,6 +124,7 @@ class ReviewScreen(Screen[None]):
                         id="card-view",
                         media_dir=media_dir,
                         images_enabled=images_enabled,
+                        high_contrast=high_contrast,
                     ),
                     id="card-scroll",
                     classes="card-container",
@@ -146,6 +173,11 @@ class ReviewScreen(Screen[None]):
             if self._current_card is not None and len(self._current_card.rating_labels) == 4
             else None
         )
+        extra_hints = (
+            f"{undo_hint}{replay_hint}"
+            "[dim]b[/dim] bury  [dim]![/dim] suspend  [dim]f[/dim] flag"
+        )
+
         if labels:
             again, hard, good, easy = labels
             return (
@@ -153,14 +185,14 @@ class ReviewScreen(Screen[None]):
                 f"[bold yellow]2[/bold yellow] Hard [dim]{hard}[/dim]  "
                 f"[bold green]3[/bold green] Good [dim]{good}[/dim]  "
                 f"[bold blue]4[/bold blue] Easy [dim]{easy}[/dim]  "
-                f"{undo_hint}{replay_hint}"
+                f"{extra_hints}"
             )
         return (
             "[bold red]1[/bold red] Again  "
             "[bold yellow]2[/bold yellow] Hard  "
             "[bold green]3[/bold green] Good  "
             "[bold blue]4[/bold blue] Easy  "
-            f"{undo_hint}{replay_hint}"
+            f"{extra_hints}"
         )
 
     async def on_mount(self) -> None:
@@ -217,6 +249,7 @@ class ReviewScreen(Screen[None]):
 
         self._current_card = self._session.next_card()
         self._answer_revealed = False
+        self._last_action_was_flag = False
 
         if self._current_card is None:
             # No more cards - show done screen
@@ -225,7 +258,20 @@ class ReviewScreen(Screen[None]):
             await self.app.switch_screen(DoneScreen(self._deck_name))
             return
 
+        # Read existing flag from card
+        self._current_flag = self._current_card.card.user_flag()
+
         self._display_card()
+
+    def _update_title_with_flag(self) -> None:
+        """Update the deck title Static to include a flag indicator if flagged."""
+        title = f"[bold]{self._deck_name}[/bold]"
+        if self._current_flag > 0:
+            color = self.FLAG_COLORS.get(self._current_flag, "#ffffff")
+            name = self.FLAG_NAMES.get(self._current_flag, "")
+            title += f"  [{color}]\u2691 {name}[/{color}]"
+        deck_title = self.query_one("#deck-title", Static)
+        deck_title.update(title)
 
     def _display_card(self, play_audio: bool = True) -> None:
         """Display the current card content.
@@ -250,6 +296,9 @@ class ReviewScreen(Screen[None]):
         # Reset scroll to top AFTER content update so scrollbar visual syncs correctly
         scroll_container = self.query_one("#card-scroll", VerticalScroll)
         scroll_container.scroll_home(animate=False)
+
+        # Update title with flag indicator
+        self._update_title_with_flag()
 
         # Update help text (includes Show Answer prompt or Rating bar)
         help_bar = self.query_one("#help-bar", Static)
@@ -429,6 +478,7 @@ class ReviewScreen(Screen[None]):
         if self._session is None or self._current_card is None:
             return
 
+        self._last_action_was_flag = False
         try:
             self._session.answer(rating)
             self.clanki_app.state.stats.record_answer(int(rating))
@@ -437,14 +487,73 @@ class ReviewScreen(Screen[None]):
         except Exception as exc:
             self.notify(f"Error rating card: {exc}", severity="error")
 
+    async def action_bury_card(self) -> None:
+        """Bury the current card (skip for today)."""
+        if self._session is None or self._current_card is None:
+            return
+        self._last_action_was_flag = False
+        try:
+            self._session.bury_card()
+            self.notify("Card buried", severity="information")
+            self._update_stats()
+            await self._load_next_card()
+        except Exception as exc:
+            self.notify(f"Error burying card: {exc}", severity="error")
+
+    async def action_suspend_card(self) -> None:
+        """Suspend the current card."""
+        if self._session is None or self._current_card is None:
+            return
+        self._last_action_was_flag = False
+        try:
+            self._session.suspend_card()
+            self.notify("Card suspended", severity="information")
+            self._update_stats()
+            await self._load_next_card()
+        except Exception as exc:
+            self.notify(f"Error suspending card: {exc}", severity="error")
+
+    async def action_cycle_flag(self) -> None:
+        """Cycle the flag on the current card (0-7)."""
+        if self._session is None or self._current_card is None:
+            return
+        try:
+            self._current_flag = (self._current_flag + 1) % 8
+            self._session.set_card_flag(self._current_flag)
+            self._last_action_was_flag = True
+            self._update_title_with_flag()
+            # Toast disabled — the title flag indicator provides visible feedback
+            # if self._current_flag == 0:
+            #     self.notify("Flag removed", severity="information")
+            # else:
+            #     self.notify(f"Flag {self._current_flag}", severity="information")
+        except Exception as exc:
+            self.notify(f"Error setting flag: {exc}", severity="error")
+
     async def action_undo(self) -> None:
-        """Undo the last answer."""
+        """Undo the last action (flag change or card answer)."""
         if self._session is None:
+            return
+
+        # If the last action was a flag change, undo the flag instead
+        if self._last_action_was_flag:
+            try:
+                restored = self._session.undo_flag()
+                self._current_flag = restored
+                self._last_action_was_flag = False
+                self._update_title_with_flag()
+                self.notify("Flag undone", severity="information")
+            except UndoError as exc:
+                self.notify(str(exc), severity="warning")
             return
 
         try:
             self._current_card = self._session.undo()
             self._answer_revealed = False  # Show front side after undo
+            self._last_action_was_flag = False
+
+            # Read flag from the restored card
+            self._current_flag = self._current_card.card.user_flag()
 
             # Update stats (decrement reviewed count)
             stats = self.clanki_app.state.stats
