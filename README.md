@@ -140,7 +140,10 @@ This is useful for:
 
 ### Planned
 
-- [ ] More review actions (bury, suspend, flag, etc.)
+- [x] More review actions (bury, suspend, flag, etc.)
+
+   >added v0.1.3
+      
 - [ ] Custom decks (filtered decks)
 - [ ] Support for type in answer cards
 - [ ] Profile switching within the TUI
