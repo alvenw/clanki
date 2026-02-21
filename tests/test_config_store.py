@@ -25,6 +25,7 @@ class TestConfig:
         assert config.images_enabled is True
         assert config.audio_enabled is True
         assert config.audio_autoplay is True
+        assert config.high_contrast is False
         assert config.expanded_decks == set()
 
     def test_to_dict(self):
@@ -33,12 +34,14 @@ class TestConfig:
             images_enabled=False,
             audio_enabled=False,
             audio_autoplay=False,
+            high_contrast=True,
             expanded_decks={1, 2, 3},
         )
         data = config.to_dict()
         assert data["images_enabled"] is False
         assert data["audio_enabled"] is False
         assert data["audio_autoplay"] is False
+        assert data["high_contrast"] is True
         assert set(data["expanded_decks"]) == {1, 2, 3}
 
     def test_from_dict(self):
@@ -47,12 +50,14 @@ class TestConfig:
             "images_enabled": False,
             "audio_enabled": False,
             "audio_autoplay": False,
+            "high_contrast": True,
             "expanded_decks": [1, 2, 3],
         }
         config = Config.from_dict(data)
         assert config.images_enabled is False
         assert config.audio_enabled is False
         assert config.audio_autoplay is False
+        assert config.high_contrast is True
         assert config.expanded_decks == {1, 2, 3}
 
     def test_from_dict_missing_key(self):

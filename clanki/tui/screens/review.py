@@ -23,7 +23,7 @@ from ...audio import (
     play_audio_for_side,
     stop_audio,
 )
-from ...config_store import Config, load_config, save_config
+from ...config_store import load_config, save_config
 from ...render import render_html_to_text
 from ...review import CardView, DeckNotFoundError, Rating, ReviewSession, UndoError
 from ..widgets.card_view import CardViewWidget
@@ -31,6 +31,17 @@ from ..widgets.stats_bar import DeckCountsBar, StatsBar
 
 if TYPE_CHECKING:
     from ..app import ClankiApp
+
+
+def _persist_config_from_state(state) -> None:
+    """Persist runtime toggle settings without dropping other config fields."""
+    config = load_config()
+    config.images_enabled = state.images_enabled
+    config.audio_enabled = state.audio_enabled
+    config.audio_autoplay = state.audio_autoplay
+    config.high_contrast = state.high_contrast
+    config.expanded_decks = state.expanded_decks.copy()
+    save_config(config)
 
 
 class ReviewScreen(Screen[None]):
@@ -590,12 +601,7 @@ class ReviewScreen(Screen[None]):
         help_bar.update(self._get_help_text())
 
         # Persist to config
-        config = Config(
-            images_enabled=state.images_enabled,
-            audio_enabled=state.audio_enabled,
-            audio_autoplay=state.audio_autoplay,
-        )
-        save_config(config)
+        _persist_config_from_state(state)
 
         # Show notification
         status = "enabled" if state.images_enabled else "disabled"
@@ -648,12 +654,7 @@ class ReviewScreen(Screen[None]):
         help_bar.update(self._get_help_text())
 
         # Persist to config
-        config = Config(
-            images_enabled=state.images_enabled,
-            audio_enabled=state.audio_enabled,
-            audio_autoplay=state.audio_autoplay,
-        )
-        save_config(config)
+        _persist_config_from_state(state)
 
         # Show notification
         status = "enabled" if state.audio_enabled else "disabled"
