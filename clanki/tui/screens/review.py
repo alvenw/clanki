@@ -9,6 +9,7 @@ This screen handles the card review flow:
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
@@ -18,6 +19,7 @@ from textual.screen import Screen
 from textual.widgets import Static
 
 from ...audio import (
+    get_audio_unavailable_message,
     is_audio_playback_available,
     play_audio_by_index,
     play_audio_for_side,
@@ -358,8 +360,22 @@ class ReviewScreen(Screen[None]):
             text=text,
             audio_files=audio_files,
             media_dir=media_dir,
-            on_error=lambda msg: self.notify(msg, severity="warning"),
+            on_error=self._notify_audio_error,
         )
+
+    def _notify_audio_error(self, message: str) -> None:
+        """Notify audio errors on the Textual main thread."""
+        if threading.current_thread() is threading.main_thread():
+            self.notify(message, severity="warning")
+            return
+        try:
+            self.app.call_from_thread(self.notify, message, severity="warning")
+        except Exception:
+            # Screen/app may be tearing down; best-effort fallback.
+            try:
+                self.notify(message, severity="warning")
+            except Exception:
+                pass
 
     async def action_space_action(self) -> None:
         """Handle space key - reveal answer or rate Good."""
@@ -435,7 +451,7 @@ class ReviewScreen(Screen[None]):
 
         if not is_audio_playback_available():
             self.notify(
-                "Audio playback is only supported on macOS",
+                get_audio_unavailable_message(),
                 severity="warning",
             )
             return
@@ -461,7 +477,7 @@ class ReviewScreen(Screen[None]):
             audio_files=audio_files,
             media_dir=media_dir,
             index=index,
-            on_error=lambda msg: self.notify(msg, severity="warning"),
+            on_error=self._notify_audio_error,
         )
 
     async def action_play_audio_1(self) -> None:
@@ -616,7 +632,7 @@ class ReviewScreen(Screen[None]):
 
         if not is_audio_playback_available():
             self.notify(
-                "Audio playback is only supported on macOS",
+                get_audio_unavailable_message(),
                 severity="warning",
             )
             return
@@ -635,7 +651,7 @@ class ReviewScreen(Screen[None]):
         # If trying to enable audio, check if it's available
         if not state.audio_enabled and not is_audio_playback_available():
             self.notify(
-                "Audio playback is only supported on macOS",
+                get_audio_unavailable_message(),
                 title="Audio not available",
                 severity="warning",
                 timeout=5,

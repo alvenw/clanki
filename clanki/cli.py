@@ -5,7 +5,7 @@ This module provides the command-line interface with support for:
 - Plain terminal mode
 - Review mode with deck selection
 - Sync mode
-- Audio playback support (macOS only)
+- Audio playback support (platform-dependent backend)
 """
 
 from __future__ import annotations
@@ -524,7 +524,7 @@ def main(argv: list[str] | None = None) -> int:
     audio_group.add_argument(
         "--audio",
         action="store_true",
-        help="Enable audio playback (overrides config, macOS only)",
+        help="Enable audio playback (overrides config)",
     )
     audio_group.add_argument(
         "--no-audio",
@@ -591,7 +591,7 @@ def main(argv: list[str] | None = None) -> int:
     review_audio_group.add_argument(
         "--audio",
         action="store_true",
-        help="Enable audio playback (overrides config, macOS only)",
+        help="Enable audio playback (overrides config)",
     )
     review_audio_group.add_argument(
         "--no-audio",
