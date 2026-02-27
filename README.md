@@ -144,7 +144,11 @@ This is useful for:
 - [x] More review actions (bury, suspend, flag, etc.)
 
    >added v0.1.3
-      
+
+- [x] Audio playback on Linux/Windows (via ffplay)
+
+   >added v0.1.4
+
 - [ ] Custom decks (filtered decks)
 - [ ] Support for type in answer cards
 - [ ] Profile switching within the TUI
