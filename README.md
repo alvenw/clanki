@@ -12,7 +12,7 @@ Clanki is a terminal-based Anki review client that lets you review your Anki fla
 |---------|-----------|
 | Anki scheduling algorithms | ✅ |
 | Image rendering | ✅ |
-| Audio playback | ✅ (macOS only) |
+| Audio playback | ✅ (macOS/Linux/Windows) |
 | Basic cards | ✅ |
 | Cloze cards | ✅ |
 | Type in the answer | 🚧 (planned)|
@@ -25,6 +25,7 @@ Clanki is a terminal-based Anki review client that lets you review your Anki fla
 - Python 3.10 or later
 - Anki Desktop installed with at least one synced profile
 - Anki Desktop must be **closed** when running clanki
+- For Linux/Windows audio playback: `ffplay` (from FFmpeg) available in `PATH`
 
 ## Installation
 

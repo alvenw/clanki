@@ -2,18 +2,17 @@
 
 This module provides:
 - Audio placeholder parsing and icon substitution
-- macOS audio playback via afplay
+- Cross-platform audio playback via system backends
 - Playback availability detection
 """
 
 from __future__ import annotations
 
-import os
 import re
-import signal
 import shutil
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -132,32 +131,62 @@ def resolve_audio_files(
     return resolved
 
 
-# Module-level cache for afplay availability
-_afplay_available: bool | None = None
+@dataclass(frozen=True)
+class _AudioBackend:
+    """Represents a supported audio playback backend."""
+
+    name: str
+    binary: str
+    base_args: tuple[str, ...]
 
 
-def _check_afplay_available() -> bool:
-    """Check if afplay binary is available (macOS only)."""
-    global _afplay_available
-    if _afplay_available is not None:
-        return _afplay_available
+# Module-level cache for backend availability
+_backend_checked = False
+_audio_backend: _AudioBackend | None = None
 
-    # afplay is only available on macOS
-    if sys.platform != "darwin":
-        _afplay_available = False
-        return False
 
-    _afplay_available = shutil.which("afplay") is not None
-    return _afplay_available
+def _backend_candidates() -> tuple[_AudioBackend, ...]:
+    """Return backend candidates in preferred order for this platform."""
+    afplay = _AudioBackend(
+        name="afplay",
+        binary="afplay",
+        base_args=("afplay",),
+    )
+    ffplay = _AudioBackend(
+        name="ffplay",
+        binary="ffplay",
+        base_args=("ffplay", "-nodisp", "-autoexit", "-nostdin", "-loglevel", "quiet"),
+    )
+
+    if sys.platform == "darwin":
+        return (afplay, ffplay)
+    return (ffplay,)
+
+
+def _detect_audio_backend() -> _AudioBackend | None:
+    """Detect and cache the first available supported backend."""
+    global _backend_checked, _audio_backend
+    if _backend_checked:
+        return _audio_backend
+
+    for backend in _backend_candidates():
+        if shutil.which(backend.binary) is not None:
+            _audio_backend = backend
+            _backend_checked = True
+            return backend
+
+    _audio_backend = None
+    _backend_checked = True
+    return None
 
 
 def is_audio_playback_available() -> bool:
     """Check if audio playback is available.
 
     Returns:
-        True if afplay is available on macOS.
+        True if a supported backend is available.
     """
-    return _check_afplay_available()
+    return _detect_audio_backend() is not None
 
 
 def get_audio_unavailable_message() -> str:
@@ -166,32 +195,72 @@ def get_audio_unavailable_message() -> str:
     Returns:
         Message explaining the situation.
     """
-    if sys.platform != "darwin":
-        return "Audio playback is only supported on macOS"
-    return "afplay not found (should be included with macOS)"
+    if _detect_audio_backend() is not None:
+        return ""
+    if sys.platform == "darwin":
+        return "No supported audio player found (need afplay or ffplay)"
+    if sys.platform == "win32":
+        return "No supported audio player found (install ffmpeg and add ffplay to PATH)"
+    if sys.platform.startswith("linux"):
+        return "No supported audio player found (install ffmpeg for ffplay)"
+    return "No supported audio player found (need ffplay on PATH)"
 
 
 # Track running audio process for stopping (only one at a time)
 _running_process: subprocess.Popen[bytes] | None = None
+_playback_thread: threading.Thread | None = None
+_playback_stop_event: threading.Event | None = None
+_process_lock = threading.Lock()
+
+
+def _build_play_command(backend: _AudioBackend, audio_file: Path) -> list[str]:
+    """Build the command to play one audio file with the selected backend."""
+    return [*backend.base_args, str(audio_file)]
+
+
+def _emit_on_error(on_error: Callable[[str], None] | None, message: str) -> None:
+    """Best-effort error callback invocation."""
+    if on_error is None:
+        return
+    try:
+        on_error(message)
+    except Exception:
+        # Avoid letting callback errors break playback worker cleanup.
+        pass
 
 
 def stop_audio() -> None:
-    """Stop any currently playing audio.
+    """Stop any currently playing audio."""
+    global _running_process, _playback_stop_event, _playback_thread
 
-    Uses process group kill to ensure all child processes (afplay) are terminated.
-    """
-    global _running_process
-    if _running_process is None:
-        return
+    with _process_lock:
+        stop_event = _playback_stop_event
+        if stop_event is not None:
+            stop_event.set()
+        proc = _running_process
+        thread = _playback_thread
 
-    try:
-        # Kill the entire process group to stop shell and all child processes
-        os.killpg(os.getpgid(_running_process.pid), signal.SIGTERM)
-    except (OSError, ProcessLookupError):
-        # Process already terminated
-        pass
+    if proc is not None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=0.2)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        except OSError:
+            pass
 
-    _running_process = None
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=0.2)
+
+    with _process_lock:
+        if _running_process is proc:
+            _running_process = None
+        if _playback_thread is thread and (thread is None or not thread.is_alive()):
+            _playback_thread = None
+            _playback_stop_event = None
 
 
 def play_audio_files(
@@ -200,7 +269,7 @@ def play_audio_files(
 ) -> bool:
     """Play a list of audio files sequentially (non-blocking).
 
-    Uses afplay on macOS. Each file plays in sequence via subprocess.
+    Uses the selected backend (afplay/ffplay) via subprocess.
     Calling this function while audio is playing will stop the current
     audio and start the new playback (interruptible).
 
@@ -211,17 +280,17 @@ def play_audio_files(
     Returns:
         True if playback started successfully, False otherwise.
     """
-    global _running_process
+    global _playback_stop_event, _playback_thread
 
     if not files:
         return True
 
-    if not _check_afplay_available():
-        if on_error:
-            on_error(get_audio_unavailable_message())
+    backend = _detect_audio_backend()
+    if backend is None:
+        _emit_on_error(on_error, get_audio_unavailable_message())
         return False
 
-    # Stop any currently playing audio (makes playback interruptible)
+    # Stop any currently playing audio (interruptible behavior)
     stop_audio()
 
     # Filter to existing files only
@@ -229,29 +298,82 @@ def play_audio_files(
     if not existing_files:
         return True
 
-    # For simplicity, we play files sequentially using a shell command
-    # This is non-blocking as we don't wait for the process
-    try:
-        # Build command to play all files sequentially
-        # Using shell to chain commands: afplay f1 && afplay f2 && ...
-        cmds = [f'afplay "{f}"' for f in existing_files]
-        full_cmd = " && ".join(cmds)
+    stop_event = threading.Event()
+    worker_thread: threading.Thread | None = None
 
-        # Use start_new_session=True to create a new process group
-        # This allows us to kill the shell and all child processes together
-        proc = subprocess.Popen(
-            full_cmd,
-            shell=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        _running_process = proc
-        return True
-    except (OSError, subprocess.SubprocessError) as exc:
-        if on_error:
-            on_error(f"Failed to play audio: {exc}")
+    def _worker() -> None:
+        global _running_process, _playback_stop_event, _playback_thread
+        try:
+            for audio_file in existing_files:
+                if stop_event.is_set():
+                    break
+
+                command = _build_play_command(backend, audio_file)
+                launch_error: Exception | None = None
+                proc: subprocess.Popen[bytes] | None = None
+                with _process_lock:
+                    # Re-check stop/ownership immediately before launching.
+                    if stop_event.is_set() or _playback_thread is not worker_thread:
+                        break
+                    try:
+                        proc = subprocess.Popen(
+                            command,
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
+                    except (OSError, subprocess.SubprocessError) as exc:
+                        launch_error = exc
+                    else:
+                        _running_process = proc
+
+                if launch_error is not None:
+                    _emit_on_error(
+                        on_error,
+                        f"Failed to start audio playback ({backend.binary}): {launch_error}",
+                    )
+                    break
+
+                assert proc is not None
+
+                try:
+                    return_code = proc.wait()
+                    if return_code != 0 and not stop_event.is_set():
+                        _emit_on_error(
+                            on_error,
+                            f"Audio playback exited with status {return_code} ({backend.binary})",
+                        )
+                        break
+                finally:
+                    with _process_lock:
+                        if _running_process is proc:
+                            _running_process = None
+        finally:
+            with _process_lock:
+                if _playback_thread is worker_thread:
+                    _running_process = None
+                    _playback_thread = None
+                    _playback_stop_event = None
+
+    thread = threading.Thread(
+        target=_worker,
+        name="clanki-audio",
+        daemon=True,
+    )
+    worker_thread = thread
+    with _process_lock:
+        _playback_thread = thread
+        _playback_stop_event = stop_event
+    try:
+        thread.start()
+    except RuntimeError as exc:
+        with _process_lock:
+            if _playback_thread is thread:
+                _playback_thread = None
+                _playback_stop_event = None
+        _emit_on_error(on_error, f"Failed to start audio playback: {exc}")
         return False
+    return True
 
 
 def play_audio_for_side(
@@ -315,6 +437,11 @@ def play_audio_by_index(
 
 def reset_audio_cache() -> None:
     """Reset the module-level cache (useful for testing)."""
-    global _afplay_available, _running_process
-    _afplay_available = None
-    _running_process = None
+    global _backend_checked, _audio_backend, _running_process, _playback_stop_event, _playback_thread
+    stop_audio()
+    _backend_checked = False
+    _audio_backend = None
+    with _process_lock:
+        _running_process = None
+        _playback_stop_event = None
+    _playback_thread = None

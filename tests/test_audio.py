@@ -1,15 +1,14 @@
 """Tests for audio.py - Audio playback support."""
 
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
+import clanki.audio as audio_module
 from clanki.audio import (
     AUDIO_ICON,
     AudioPlaceholder,
-    _check_afplay_available,
+    _detect_audio_backend,
+    get_audio_unavailable_message,
     is_audio_playback_available,
     parse_audio_placeholders,
     play_audio_by_index,
@@ -29,6 +28,60 @@ def setup_function():
 def teardown_function():
     """Reset cache after each test."""
     reset_audio_cache()
+
+
+class _ImmediateThread:
+    """Thread stand-in that executes immediately for deterministic tests."""
+
+    def __init__(self, target, name, daemon):
+        self._target = target
+        self._alive = False
+
+    def start(self):
+        self._alive = True
+        self._target()
+        self._alive = False
+
+    def is_alive(self):
+        return self._alive
+
+    def join(self, timeout=None):
+        return None
+
+
+class _ControlledThread:
+    """Thread double that allows manual execution of target."""
+
+    instances: list["_ControlledThread"] = []
+
+    def __init__(self, target, name, daemon):
+        self._target = target
+        self._alive = False
+        self.name = name
+        self.daemon = daemon
+        _ControlledThread.instances.append(self)
+
+    def start(self):
+        self._alive = True
+
+    def is_alive(self):
+        return self._alive
+
+    def join(self, timeout=None):
+        return None
+
+    def run_target(self):
+        try:
+            self._target()
+        finally:
+            self._alive = False
+
+
+def _which_ffplay_only(cmd: str) -> str | None:
+    """Return a fake ffplay path only for ffplay lookups."""
+    if cmd == "ffplay":
+        return "/usr/bin/ffplay"
+    return None
 
 
 class TestParseAudioPlaceholders:
@@ -174,55 +227,51 @@ class TestResolveAudioFiles:
         assert result[1] == file2
 
 
-class TestAfplayAvailability:
-    """Tests for afplay availability checking."""
+class TestAudioBackendAvailability:
+    """Tests for audio backend detection and availability checks."""
 
-    def test_available_on_macos(self):
-        """afplay should be detected on macOS when available."""
+    def test_macos_prefers_afplay(self):
+        """macOS should prefer afplay when both backends are available."""
+        reset_audio_cache()
+
+        def which(cmd):
+            if cmd == "afplay":
+                return "/usr/bin/afplay"
+            if cmd == "ffplay":
+                return "/usr/bin/ffplay"
+            return None
+
+        with patch("sys.platform", "darwin"), patch("shutil.which", side_effect=which):
+            backend = _detect_audio_backend()
+            assert backend is not None
+            assert backend.name == "afplay"
+            assert is_audio_playback_available() is True
+
+        reset_audio_cache()
+
+    def test_non_macos_uses_ffplay(self):
+        """Linux/Windows should use ffplay when available."""
         reset_audio_cache()
 
         with (
-            patch("sys.platform", "darwin"),
-            patch("shutil.which", return_value="/usr/bin/afplay"),
+            patch("sys.platform", "linux"),
+            patch("shutil.which", side_effect=_which_ffplay_only),
         ):
-            result = _check_afplay_available()
-            assert result is True
+            backend = _detect_audio_backend()
+            assert backend is not None
+            assert backend.name == "ffplay"
+            assert is_audio_playback_available() is True
 
         reset_audio_cache()
 
-    def test_unavailable_on_non_macos(self):
-        """afplay should not be available on non-macOS."""
+    def test_unavailable_when_no_supported_backend(self):
+        """Availability should be false when no supported backend exists."""
         reset_audio_cache()
 
-        with patch("sys.platform", "linux"):
-            result = _check_afplay_available()
-            assert result is False
-
-        reset_audio_cache()
-
-    def test_unavailable_when_not_found(self):
-        """afplay should not be available when not in PATH."""
-        reset_audio_cache()
-
-        with (
-            patch("sys.platform", "darwin"),
-            patch("shutil.which", return_value=None),
-        ):
-            result = _check_afplay_available()
-            assert result is False
-
-        reset_audio_cache()
-
-    def test_is_audio_playback_available_delegates(self):
-        """is_audio_playback_available should delegate to _check_afplay_available."""
-        reset_audio_cache()
-
-        with (
-            patch("sys.platform", "darwin"),
-            patch("shutil.which", return_value="/usr/bin/afplay"),
-        ):
-            result = is_audio_playback_available()
-            assert result is True
+        with patch("sys.platform", "win32"), patch("shutil.which", return_value=None):
+            assert _detect_audio_backend() is None
+            assert is_audio_playback_available() is False
+            assert "ffplay" in get_audio_unavailable_message()
 
         reset_audio_cache()
 
@@ -236,36 +285,49 @@ class TestPlayAudioFiles:
         assert result is True
 
     def test_unavailable_returns_false(self, tmp_path):
-        """Should return False when afplay unavailable."""
-        reset_audio_cache()
-
-        audio_file = tmp_path / "test.mp3"
-        audio_file.touch()
-
-        with patch("sys.platform", "linux"):
-            errors = []
-            result = play_audio_files([audio_file], on_error=errors.append)
-            assert result is False
-            assert len(errors) == 1
-
-        reset_audio_cache()
-
-    def test_plays_existing_files(self, tmp_path):
-        """Should play existing files when afplay available."""
+        """Should return False when no supported backend is available."""
         reset_audio_cache()
 
         audio_file = tmp_path / "test.mp3"
         audio_file.touch()
 
         with (
-            patch("sys.platform", "darwin"),
-            patch("shutil.which", return_value="/usr/bin/afplay"),
+            patch("sys.platform", "linux"),
+            patch("shutil.which", return_value=None),
+        ):
+            errors = []
+            result = play_audio_files([audio_file], on_error=errors.append)
+            assert result is False
+            assert len(errors) == 1
+            assert "ffplay" in errors[0]
+
+        reset_audio_cache()
+
+    def test_plays_existing_files(self, tmp_path):
+        """Should play existing files when backend is available."""
+        reset_audio_cache()
+
+        audio_file = tmp_path / "test.mp3"
+        audio_file.touch()
+
+        with (
+            patch("sys.platform", "linux"),
+            patch("shutil.which", side_effect=_which_ffplay_only),
+            patch("clanki.audio.threading.Thread", _ImmediateThread),
             patch("subprocess.Popen") as mock_popen,
         ):
-            mock_popen.return_value = MagicMock()
+            mock_proc = MagicMock()
+            mock_proc.wait.return_value = 0
+            mock_popen.return_value = mock_proc
             result = play_audio_files([audio_file])
             assert result is True
             mock_popen.assert_called_once()
+            command = mock_popen.call_args[0][0]
+            kwargs = mock_popen.call_args.kwargs
+            assert command[0] == "ffplay"
+            assert "-nostdin" in command
+            assert command[-1].endswith("test.mp3")
+            assert kwargs["stdin"] is audio_module.subprocess.DEVNULL
 
         reset_audio_cache()
 
@@ -276,8 +338,9 @@ class TestPlayAudioFiles:
         missing_file = tmp_path / "missing.mp3"
 
         with (
-            patch("sys.platform", "darwin"),
-            patch("shutil.which", return_value="/usr/bin/afplay"),
+            patch("sys.platform", "linux"),
+            patch("shutil.which", side_effect=_which_ffplay_only),
+            patch("clanki.audio.threading.Thread", _ImmediateThread),
             patch("subprocess.Popen") as mock_popen,
         ):
             # File doesn't exist, so subprocess should not be called
@@ -286,6 +349,94 @@ class TestPlayAudioFiles:
             assert result is True
             # Verify subprocess was never called for missing file
             mock_popen.assert_not_called()
+
+        reset_audio_cache()
+
+    def test_worker_launch_failure_calls_on_error(self, tmp_path):
+        """Worker launch failures should be reported via on_error."""
+        reset_audio_cache()
+
+        audio_file = tmp_path / "test.mp3"
+        audio_file.touch()
+
+        with (
+            patch("sys.platform", "linux"),
+            patch("shutil.which", side_effect=_which_ffplay_only),
+            patch("clanki.audio.threading.Thread", _ImmediateThread),
+            patch("subprocess.Popen", side_effect=OSError("boom")),
+        ):
+            errors = []
+            result = play_audio_files([audio_file], on_error=errors.append)
+            assert result is True
+            assert len(errors) == 1
+            assert "Failed to start audio playback" in errors[0]
+            assert "ffplay" in errors[0]
+
+        reset_audio_cache()
+
+    def test_stop_signal_before_launch_prevents_next_clip(self, tmp_path):
+        """Re-check stop signal right before Popen to avoid launching extra clips."""
+        reset_audio_cache()
+
+        file1 = tmp_path / "a.mp3"
+        file2 = tmp_path / "b.mp3"
+        file1.touch()
+        file2.touch()
+        build_count = {"n": 0}
+
+        def build_command_and_stop(backend, audio_file):
+            build_count["n"] += 1
+            # Simulate a boundary stop request after loop-entry check.
+            if build_count["n"] == 2 and audio_module._playback_stop_event is not None:
+                audio_module._playback_stop_event.set()
+            return [*backend.base_args, str(audio_file)]
+
+        with (
+            patch("sys.platform", "linux"),
+            patch("shutil.which", side_effect=_which_ffplay_only),
+            patch("clanki.audio.threading.Thread", _ImmediateThread),
+            patch("clanki.audio._build_play_command", side_effect=build_command_and_stop),
+            patch("subprocess.Popen") as mock_popen,
+        ):
+            mock_proc = MagicMock()
+            mock_proc.wait.return_value = 0
+            mock_popen.return_value = mock_proc
+            assert play_audio_files([file1, file2]) is True
+            # Second clip should never launch after stop_event is set.
+            assert mock_popen.call_count == 1
+
+        reset_audio_cache()
+
+    def test_stale_worker_cannot_clear_new_playback_state(self, tmp_path):
+        """Old worker finalization must not erase newer worker state."""
+        reset_audio_cache()
+        _ControlledThread.instances.clear()
+
+        audio_file = tmp_path / "test.mp3"
+        audio_file.touch()
+
+        with (
+            patch("sys.platform", "linux"),
+            patch("shutil.which", side_effect=_which_ffplay_only),
+            patch("clanki.audio.threading.Thread", _ControlledThread),
+        ):
+            assert play_audio_files([audio_file]) is True
+            first_thread = _ControlledThread.instances[-1]
+
+            # Start second playback while first worker still "alive"
+            assert play_audio_files([audio_file]) is True
+            second_thread = _ControlledThread.instances[-1]
+            assert second_thread is not first_thread
+
+            active_thread_before = audio_module._playback_thread
+            active_stop_event_before = audio_module._playback_stop_event
+
+            # Simulate stale worker finishing after newer playback started
+            first_thread.run_target()
+
+            assert audio_module._playback_thread is active_thread_before
+            assert audio_module._playback_thread is second_thread
+            assert audio_module._playback_stop_event is active_stop_event_before
 
         reset_audio_cache()
 
@@ -319,11 +470,14 @@ class TestPlayAudioForSide:
         audio_file.touch()
 
         with (
-            patch("sys.platform", "darwin"),
-            patch("shutil.which", return_value="/usr/bin/afplay"),
+            patch("sys.platform", "linux"),
+            patch("shutil.which", side_effect=_which_ffplay_only),
+            patch("clanki.audio.threading.Thread", _ImmediateThread),
             patch("subprocess.Popen") as mock_popen,
         ):
-            mock_popen.return_value = MagicMock()
+            mock_proc = MagicMock()
+            mock_proc.wait.return_value = 0
+            mock_popen.return_value = mock_proc
             result = play_audio_for_side(
                 text="[audio: 0]",
                 audio_files=["test.mp3"],
@@ -401,11 +555,14 @@ class TestPlayAudioByIndex:
         file2.touch()
 
         with (
-            patch("sys.platform", "darwin"),
-            patch("shutil.which", return_value="/usr/bin/afplay"),
+            patch("sys.platform", "linux"),
+            patch("shutil.which", side_effect=_which_ffplay_only),
+            patch("clanki.audio.threading.Thread", _ImmediateThread),
             patch("subprocess.Popen") as mock_popen,
         ):
-            mock_popen.return_value = MagicMock()
+            mock_proc = MagicMock()
+            mock_proc.wait.return_value = 0
+            mock_popen.return_value = mock_proc
             result = play_audio_by_index(
                 text="[audio: 0] [audio: 1]",
                 audio_files=["a.mp3", "b.mp3"],
@@ -416,7 +573,7 @@ class TestPlayAudioByIndex:
             mock_popen.assert_called_once()
             # Verify the command contains b.mp3
             call_args = mock_popen.call_args[0][0]
-            assert "b.mp3" in call_args
-            assert "a.mp3" not in call_args
+            assert any("b.mp3" in part for part in call_args)
+            assert all("a.mp3" not in part for part in call_args)
 
         reset_audio_cache()
