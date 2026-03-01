@@ -155,7 +155,7 @@ def _backend_candidates() -> tuple[_AudioBackend, ...]:
     ffplay = _AudioBackend(
         name="ffplay",
         binary="ffplay",
-        base_args=("ffplay", "-nodisp", "-autoexit", "-nostdin", "-loglevel", "quiet"),
+        base_args=("ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"),
     )
 
     if sys.platform == "darwin":
@@ -320,7 +320,7 @@ def play_audio_files(
                             command,
                             stdin=subprocess.DEVNULL,
                             stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
+                            stderr=subprocess.PIPE,
                         )
                     except (OSError, subprocess.SubprocessError) as exc:
                         launch_error = exc
@@ -339,10 +339,16 @@ def play_audio_files(
                 try:
                     return_code = proc.wait()
                     if return_code != 0 and not stop_event.is_set():
-                        _emit_on_error(
-                            on_error,
-                            f"Audio playback exited with status {return_code} ({backend.binary})",
-                        )
+                        stderr_text = ""
+                        if proc.stderr is not None:
+                            try:
+                                stderr_text = proc.stderr.read().decode("utf-8", errors="replace").strip()
+                            except Exception:
+                                pass
+                        msg = f"Audio playback exited with status {return_code} ({backend.binary})"
+                        if stderr_text:
+                            msg += f": {stderr_text}"
+                        _emit_on_error(on_error, msg)
                         break
                 finally:
                     with _process_lock:
