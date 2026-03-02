@@ -325,9 +325,10 @@ class TestPlayAudioFiles:
             command = mock_popen.call_args[0][0]
             kwargs = mock_popen.call_args.kwargs
             assert command[0] == "ffplay"
-            assert "-nostdin" in command
+            assert "-nostdin" not in command
             assert command[-1].endswith("test.mp3")
             assert kwargs["stdin"] is audio_module.subprocess.DEVNULL
+            assert kwargs["stderr"] is audio_module.subprocess.PIPE
 
         reset_audio_cache()
 
@@ -437,6 +438,58 @@ class TestPlayAudioFiles:
             assert audio_module._playback_thread is active_thread_before
             assert audio_module._playback_thread is second_thread
             assert audio_module._playback_stop_event is active_stop_event_before
+
+        reset_audio_cache()
+
+    def test_nonzero_exit_includes_stderr(self, tmp_path):
+        """Non-zero exit should include stderr content in error message."""
+        reset_audio_cache()
+
+        audio_file = tmp_path / "test.mp3"
+        audio_file.touch()
+
+        with (
+            patch("sys.platform", "linux"),
+            patch("shutil.which", side_effect=_which_ffplay_only),
+            patch("clanki.audio.threading.Thread", _ImmediateThread),
+            patch("subprocess.Popen") as mock_popen,
+        ):
+            mock_proc = MagicMock()
+            mock_proc.wait.return_value = 1
+            mock_proc.stderr.read.return_value = b"Option nostdin not found."
+            mock_popen.return_value = mock_proc
+
+            errors: list[str] = []
+            play_audio_files([audio_file], on_error=errors.append)
+            assert len(errors) == 1
+            assert "status 1" in errors[0]
+            assert "Option nostdin not found." in errors[0]
+
+        reset_audio_cache()
+
+    def test_nonzero_exit_empty_stderr(self, tmp_path):
+        """Non-zero exit with empty stderr should give clean message."""
+        reset_audio_cache()
+
+        audio_file = tmp_path / "test.mp3"
+        audio_file.touch()
+
+        with (
+            patch("sys.platform", "linux"),
+            patch("shutil.which", side_effect=_which_ffplay_only),
+            patch("clanki.audio.threading.Thread", _ImmediateThread),
+            patch("subprocess.Popen") as mock_popen,
+        ):
+            mock_proc = MagicMock()
+            mock_proc.wait.return_value = 1
+            mock_proc.stderr.read.return_value = b""
+            mock_popen.return_value = mock_proc
+
+            errors: list[str] = []
+            play_audio_files([audio_file], on_error=errors.append)
+            assert len(errors) == 1
+            assert "status 1" in errors[0]
+            assert errors[0].endswith("(ffplay)")
 
         reset_audio_cache()
 
