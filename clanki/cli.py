@@ -437,24 +437,60 @@ def _cmd_default(args: argparse.Namespace) -> int:
             col = open_collection(collection_path)
 
             try:
-                print("\nAvailable decks:")
+                deck_filter = getattr(args, "deck_filter", None)
+                if deck_filter:
+                    print(f"\nDecks matching '{deck_filter}':")
+                else:
+                    print("\nAvailable decks:")
                 print("-" * 40)
 
                 # Get deck tree for counts
                 tree = col.sched.deck_due_tree()
 
-                def print_deck(node: object, indent: int = 0) -> None:
+                def filter_node(node: object, query: str) -> bool:
+                    """Check if node or any descendant matches the filter."""
+                    q = query.lower()
+                    if q in node.name.lower():  # type: ignore
+                        return True
+                    for child in node.children:  # type: ignore
+                        if filter_node(child, query):
+                            return True
+                    return False
+
+                def print_deck(node: object, indent: int = 0, query: str | None = None) -> None:
                     prefix = "  " * indent
                     total = node.new_count + node.learn_count + node.review_count  # type: ignore
-                    if total > 0 or indent == 0:
+                    if query:
+                        q = query.lower()
+                        name_matches = q in node.name.lower()  # type: ignore
+                        has_matching_child = any(
+                            filter_node(c, query) for c in node.children  # type: ignore
+                        )
+                        if not name_matches and not has_matching_child:
+                            return
+                        # Print this node (it's either a match or ancestor of a match)
                         print(
                             f"{prefix}{node.name}  "  # type: ignore
                             f"({node.new_count}/{node.learn_count}/{node.review_count})"  # type: ignore
                         )
-                    for child in node.children:  # type: ignore
-                        print_deck(child, indent + 1)
+                        # If this node matches, print all children normally
+                        if name_matches:
+                            for child in node.children:  # type: ignore
+                                print_deck(child, indent + 1)
+                        else:
+                            # Only recurse into matching children
+                            for child in node.children:  # type: ignore
+                                print_deck(child, indent + 1, query)
+                    else:
+                        if total > 0 or indent == 0:
+                            print(
+                                f"{prefix}{node.name}  "  # type: ignore
+                                f"({node.new_count}/{node.learn_count}/{node.review_count})"  # type: ignore
+                            )
+                        for child in node.children:  # type: ignore
+                            print_deck(child, indent + 1)
 
-                print_deck(tree)
+                print_deck(tree, query=deck_filter)
 
                 print()
                 print("Run 'clanki review \"Deck Name\"' to start reviewing.")
@@ -503,6 +539,13 @@ def main(argv: list[str] | None = None) -> int:
         "--plain",
         action="store_true",
         help="Force plain terminal mode (no TUI)",
+    )
+    parser.add_argument(
+        "--filter",
+        type=str,
+        default=None,
+        dest="deck_filter",
+        help="Filter decks by name (matches parent and child names)",
     )
 
     # Image rendering options (mutually exclusive)

@@ -95,6 +95,10 @@ class ClankiApp(App[None]):
         min-height: 0;
     }
 
+    #deck-filter {
+        margin-bottom: 1;
+    }
+
     #deck-list {
         border: solid $primary;
     }
