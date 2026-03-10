@@ -2,13 +2,16 @@
 
 Shows detailed review statistics with rich color-coded display including
 today's reviews, session stats, streaks, due breakdown, card states,
-retention, forecast, 28-day review heatmap, and growth metrics.
-Supports per-deck and collection-wide views.
+retention, forecast, 28-day review heatmap, growth metrics, review count
+and time graphs, answer button distribution, card intervals, hourly
+breakdown, and cards added. Supports per-deck and collection-wide views
+with configurable time periods (1 month, 1 year, all time).
 """
 
 from __future__ import annotations
 
 import time
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -45,6 +48,7 @@ C_ADDED = "#5eb5f7"  # Blue for added
 C_MATURED = "#9b8ec4"  # Purple for matured
 C_DIM = "#777777"  # Dim text
 C_BRIGHT = "#e0e0e0"  # Bright text for values
+C_TIME = "#6c9fd4"  # Blue for time bars
 # Bar gradient: 8 colors from dim blue to bright cyan
 BAR_GRADIENT = [
     "#2a4a6a",
@@ -67,6 +71,11 @@ HEAT_COLORS = [
     "#9adeff",  # very high
 ]
 C_FUTURE = "#1a1a24"  # Darker than empty — day hasn't happened yet
+
+# Period definitions
+PERIOD_CYCLE = {"1m": "1y", "1y": "all", "all": "1m"}
+PERIOD_LABELS = {"1m": "1 month", "1y": "1 year", "all": "all time"}
+PERIOD_DAYS = {"1m": 30, "1y": 365, "all": 0}
 
 
 def _section(title: str, width: int = 44) -> str:
@@ -138,6 +147,111 @@ def _did_filter(deck_ids: list[int] | None, card_alias: str = "c") -> str:
         return ""
     id_list = ",".join(str(d) for d in deck_ids)
     return f" AND {card_alias}.did IN ({id_list})"
+
+
+def _hbar_chart(
+    rows: list[tuple[str, list[tuple[int, str]]]],
+    bar_width: int = 36,
+) -> list[str]:
+    """Render horizontal stacked bar chart as Rich markup lines.
+
+    Args:
+        rows: [(label, [(segment_value, color), ...]), ...]
+        bar_width: Maximum bar width in characters.
+
+    Returns:
+        List of Rich markup strings, one per row.
+    """
+    max_total = max((sum(v for v, _ in segs) for _, segs in rows), default=1) or 1
+    lines: list[str] = []
+    block = "\u2588"
+    for label, segments in rows:
+        total = sum(v for v, _ in segments)
+        line = f"  {label}  "
+        for value, color in segments:
+            w = round(value / max_total * bar_width) if max_total > 0 else 0
+            if w > 0:
+                line += f"[{color}]{block * w}[/{color}]"
+        line += f"  [{C_DIM}]{total}[/{C_DIM}]"
+        lines.append(line)
+    return lines
+
+
+def _aggregate_daily_to_buckets(
+    daily: dict[int, int | list[int]],
+    period: str,
+    ref_epoch: int,
+) -> list[tuple[str, int | list[int]]]:
+    """Aggregate day-offset data into display buckets.
+
+    For 1m: daily rows (up to 30). For 1y: weekly (~52). For all: monthly.
+    Returns [(label, value_or_list), ...] sorted chronologically.
+    """
+    if not daily:
+        return []
+
+    now = datetime.now()
+
+    if period == "1m":
+        # Daily: each offset is one row
+        result = []
+        for offset in sorted(daily.keys()):
+            dt = datetime.fromtimestamp(ref_epoch + offset * 86400)
+            label = dt.strftime("%b %d")
+            result.append((f"[{C_DIM}]{label:>6}[/{C_DIM}]", daily[offset]))
+        return result[-30:]  # cap at 30 rows
+
+    if period == "1y":
+        # Weekly buckets
+        buckets: dict[int, list[int | list[int]]] = defaultdict(list)
+        for offset, val in sorted(daily.items()):
+            week = offset // 7
+            buckets[week].append(val)
+        result = []
+        for week in sorted(buckets.keys()):
+            dt = datetime.fromtimestamp(ref_epoch + week * 7 * 86400)
+            label = dt.strftime("%b %d")
+            vals = buckets[week]
+            if isinstance(vals[0], list):
+                # Stacked: sum each position
+                n = len(vals[0])
+                agg = [0] * n
+                for v in vals:
+                    for i in range(n):
+                        agg[i] += v[i]
+                result.append((f"[{C_DIM}]{label:>6}[/{C_DIM}]", agg))
+            else:
+                result.append(
+                    (f"[{C_DIM}]{label:>6}[/{C_DIM}]", sum(vals))
+                )
+        return result[-52:]
+
+    # All time: monthly buckets
+    buckets_m: dict[str, list[int | list[int]]] = defaultdict(list)
+    order: list[str] = []
+    for offset in sorted(daily.keys()):
+        dt = datetime.fromtimestamp(ref_epoch + offset * 86400)
+        key = dt.strftime("%Y-%m")
+        if key not in buckets_m:
+            order.append(key)
+        buckets_m[key].append(daily[offset])
+    result = []
+    for key in order:
+        dt = datetime.strptime(key, "%Y-%m")
+        label = dt.strftime("%b %y")
+        vals = buckets_m[key]
+        if isinstance(vals[0], list):
+            n = len(vals[0])
+            agg = [0] * n
+            for v in vals:
+                for i in range(n):
+                    agg[i] += v[i]
+            result.append((f"[{C_DIM}]{label:>6}[/{C_DIM}]", agg))
+        else:
+            result.append(
+                (f"[{C_DIM}]{label:>6}[/{C_DIM}]", sum(vals))
+            )
+    return result
 
 
 # ── Heatmap Widget ──────────────────────────────────────────────
@@ -408,6 +522,7 @@ class StatsScreen(Screen[None]):
         Binding("escape", "back", "Back"),
         Binding("q", "app.quit", "Quit"),
         Binding("d", "toggle_deck", "Toggle Deck/All"),
+        Binding("p", "cycle_period", "Period"),
     ]
 
     def __init__(
@@ -420,6 +535,7 @@ class StatsScreen(Screen[None]):
         self._deck_name = deck_name
         # Default to All Decks; restore remembered preference if a deck is available
         self._show_all = True
+        self._period = "1m"
 
     @property
     def clanki_app(self) -> "ClankiApp":
@@ -428,11 +544,36 @@ class StatsScreen(Screen[None]):
         assert isinstance(self.app, ClankiApp)
         return self.app
 
+    def _period_ms(self) -> int:
+        """Return epoch-millisecond cutoff for the current period (0 = all)."""
+        days = PERIOD_DAYS[self._period]
+        if days == 0:
+            return 0
+        return (int(time.time()) - days * 86400) * 1000
+
+    def _period_epoch(self) -> int:
+        """Return epoch-seconds cutoff for the current period (0 = all)."""
+        days = PERIOD_DAYS[self._period]
+        if days == 0:
+            return 0
+        return int(time.time()) - days * 86400
+
+    def _ref_epoch(self) -> int:
+        """Reference epoch for day-offset calculations in period queries."""
+        epoch = self._period_epoch()
+        if epoch == 0:
+            # For "all time", use a very old reference point
+            return 0
+        return epoch
+
     def compose(self) -> ComposeResult:
         scope_text = self._scope_label()
 
         yield Static(
-            "[dim]d[/dim] toggle deck/all  [dim]Esc[/dim] back  [dim]q[/dim] quit",
+            "[dim]d[/dim] toggle deck/all  "
+            "[dim]p[/dim] period  "
+            "[dim]Esc[/dim] back  "
+            "[dim]q[/dim] quit",
             classes="help-text footer-bar",
             markup=True,
         )
@@ -450,6 +591,7 @@ class StatsScreen(Screen[None]):
                     Static(id="stats-mid", markup=True),
                     ReviewHeatmap(id="review-heatmap"),
                     Static(id="stats-bottom", markup=True),
+                    Static(id="stats-graphs", markup=True),
                     id="stats-scroll",
                 ),
                 classes="content-column",
@@ -459,15 +601,20 @@ class StatsScreen(Screen[None]):
 
     def _scope_label(self) -> str:
         scope = "All Decks" if self._show_all else (self._deck_name or "Unknown")
+        period_text = PERIOD_LABELS[self._period]
         hint = ""
         if self._deck_name:
             hint = f"  [{C_DIM}]d to toggle[/{C_DIM}]"
-        return f"[bold]Statistics[/bold]  [{C_ACCENT}]{scope}[/{C_ACCENT}]{hint}"
+        return (
+            f"[bold]Statistics[/bold]  [{C_ACCENT}]{scope}[/{C_ACCENT}]"
+            f"  [{C_DIM}][{period_text}][/{C_DIM}]{hint}"
+        )
 
     async def on_mount(self) -> None:
-        # Restore remembered all/deck preference
+        # Restore remembered preferences
         if self._deck_name is not None:
             self._show_all = self.clanki_app.state.stats_show_all
+        self._period = self.clanki_app.state.stats_period
         self._refresh_stats()
 
     def _refresh_stats(self) -> None:
@@ -533,6 +680,14 @@ class StatsScreen(Screen[None]):
             growth_lines = self._build_after_heatmap_stats(col, did, deck_ids)
             w = self.query_one("#stats-bottom", Static)
             w.update("\n".join(growth_lines))
+            w.refresh(layout=True)
+        except Exception:
+            pass
+
+        try:
+            graph_lines = self._build_graph_stats(col, deck_ids, did)
+            w = self.query_one("#stats-graphs", Static)
+            w.update("\n".join(graph_lines))
             w.refresh(layout=True)
         except Exception:
             pass
@@ -658,9 +813,82 @@ class StatsScreen(Screen[None]):
         lines: list[str] = []
 
         lines.append("")
-        lines.append(_section("Growth (30 days)"))
+        period_label = PERIOD_LABELS[self._period]
+        lines.append(_section(f"Growth ({period_label})"))
         lines.extend(self._growth_stats(col, did, deck_ids))
         lines.append("")
+
+        return lines
+
+    def _build_graph_stats(
+        self,
+        col: "Collection",
+        deck_ids: list[int] | None,
+        did: str,
+    ) -> list[str]:
+        """Build all new graph sections below Growth."""
+        lines: list[str] = []
+        period_label = PERIOD_LABELS[self._period]
+
+        # Review Count
+        try:
+            lines.append(_section(f"Review Count ({period_label})"))
+            lines.extend(self._review_count_stats(col, did))
+            lines.append("")
+        except Exception:
+            lines.append(_section(f"Review Count ({period_label})"))
+            lines.append(f"  {_label('No data')}")
+            lines.append("")
+
+        # Review Time
+        try:
+            lines.append(_section(f"Review Time ({period_label})"))
+            lines.extend(self._review_time_stats(col, did))
+            lines.append("")
+        except Exception:
+            lines.append(_section(f"Review Time ({period_label})"))
+            lines.append(f"  {_label('No data')}")
+            lines.append("")
+
+        # Answer Buttons
+        try:
+            lines.append(_section(f"Answer Buttons ({period_label})"))
+            lines.extend(self._answer_buttons_stats(col, did))
+            lines.append("")
+        except Exception:
+            lines.append(_section(f"Answer Buttons ({period_label})"))
+            lines.append(f"  {_label('No data')}")
+            lines.append("")
+
+        # Card Intervals
+        try:
+            lines.append(_section("Card Intervals"))
+            lines.extend(self._interval_stats(col, deck_ids))
+            lines.append("")
+        except Exception:
+            lines.append(_section("Card Intervals"))
+            lines.append(f"  {_label('No data')}")
+            lines.append("")
+
+        # Hourly Breakdown
+        try:
+            lines.append(_section(f"Hourly Breakdown ({period_label})"))
+            lines.extend(self._hourly_stats(col, did))
+            lines.append("")
+        except Exception:
+            lines.append(_section(f"Hourly Breakdown ({period_label})"))
+            lines.append(f"  {_label('No data')}")
+            lines.append("")
+
+        # Cards Added
+        try:
+            lines.append(_section(f"Cards Added ({period_label})"))
+            lines.extend(self._added_stats(col, deck_ids))
+            lines.append("")
+        except Exception:
+            lines.append(_section(f"Cards Added ({period_label})"))
+            lines.append(f"  {_label('No data')}")
+            lines.append("")
 
         return lines
 
@@ -921,15 +1149,23 @@ class StatsScreen(Screen[None]):
     def _retention_stats(self, col: "Collection", did: str) -> list[str]:
         lines: list[str] = []
         try:
-            ago = (int(time.time()) - 30 * 86400) * 1000
+            ago = self._period_ms()
+            period_label = PERIOD_LABELS[self._period]
+            where_clause = f" WHERE r.type=1{did}"
+            if ago > 0:
+                where_clause += " AND r.id>?"
+                params: tuple = (ago,)
+            else:
+                params = ()
+
             row = col.db.first(
                 "SELECT"
                 "  COUNT(CASE WHEN r.ease>=2 THEN 1 END),"
                 "  COUNT(*)"
                 " FROM revlog r"
                 " JOIN cards c ON r.cid=c.id"
-                f" WHERE r.type=1 AND r.id>?{did}",
-                ago,
+                + where_clause,
+                *params,
             )
             if row and row[1] and row[1] > 0:
                 passed = row[0] or 0
@@ -937,13 +1173,13 @@ class StatsScreen(Screen[None]):
                 pct = (passed / total) * 100
                 color = _pct_color(pct)
                 lines.append(
-                    f"  {_label('30-day pass rate')}  "
+                    f"  {_label(f'{period_label} pass rate')}  "
                     f"{_val(f'{pct:.1f}%', color)}"
                     f"  {_label(f'({passed}/{total} reviews)')}"
                 )
                 lines.append(f"  {_retention_meter(pct)}")
             else:
-                lines.append(f"  {_label('No review data in last 30 days')}")
+                lines.append(f"  {_label(f'No review data in {period_label}')}")
         except Exception:
             lines.append(f"  {_label('No data')}")
         return lines
@@ -958,24 +1194,34 @@ class StatsScreen(Screen[None]):
     ) -> list[str]:
         lines: list[str] = []
         try:
-            ago = (int(time.time()) - 30 * 86400) * 1000
+            ago = self._period_ms()
 
             dc = ""
             if deck_ids:
                 dc = f" AND did IN ({','.join(str(d) for d in deck_ids)})"
 
-            r = col.db.first(
-                f"SELECT COUNT(*) FROM cards WHERE id>?{dc}",
-                ago,
-            )
+            if ago > 0:
+                r = col.db.first(
+                    f"SELECT COUNT(*) FROM cards WHERE id>?{dc}",
+                    ago,
+                )
+            else:
+                r = col.db.first(f"SELECT COUNT(*) FROM cards WHERE 1=1{dc}")
             added = (r[0] if r else 0) or 0
 
-            r = col.db.first(
-                "SELECT COUNT(*) FROM revlog r"
-                " JOIN cards c ON r.cid=c.id"
-                f" WHERE r.ivl>=21 AND r.lastIvl<21 AND r.id>?{did}",
-                ago,
-            )
+            if ago > 0:
+                r = col.db.first(
+                    "SELECT COUNT(*) FROM revlog r"
+                    " JOIN cards c ON r.cid=c.id"
+                    f" WHERE r.ivl>=21 AND r.lastIvl<21 AND r.id>?{did}",
+                    ago,
+                )
+            else:
+                r = col.db.first(
+                    "SELECT COUNT(*) FROM revlog r"
+                    " JOIN cards c ON r.cid=c.id"
+                    f" WHERE r.ivl>=21 AND r.lastIvl<21{did}",
+                )
             matured = (r[0] if r else 0) or 0
 
             lines.append(
@@ -990,6 +1236,422 @@ class StatsScreen(Screen[None]):
             )
         return lines
 
+    # ── Review Count (NEW) ──────────────────────────────────────
+
+    def _review_count_stats(self, col: "Collection", did: str) -> list[str]:
+        lines: list[str] = []
+        ago = self._period_ms()
+        ref = self._ref_epoch()
+
+        where = f" WHERE r.id>0{did}" if ago == 0 else f" WHERE r.id>?{did}"
+        params: tuple = () if ago == 0 else (ago,)
+
+        rows = col.db.all(
+            "SELECT"
+            " CAST((r.id/1000-?)/86400 AS INTEGER) as d,"
+            " CASE"
+            "   WHEN r.type=0 THEN 0"
+            "   WHEN r.type=2 THEN 3"
+            "   WHEN c.ivl>=21 THEN 2"
+            "   ELSE 1"
+            " END as ctype,"
+            " COUNT(*)"
+            " FROM revlog r"
+            " JOIN cards c ON r.cid=c.id"
+            + where
+            + " GROUP BY d, ctype"
+            " ORDER BY d",
+            ref,
+            *params,
+        )
+
+        # Aggregate: day -> [new, young, mature, relearn]
+        daily: dict[int, list[int]] = {}
+        days_with_reviews: set[int] = set()
+        total_reviews = 0
+        for d, ctype, cnt in rows:
+            if d not in daily:
+                daily[d] = [0, 0, 0, 0]
+            idx = min(ctype, 3)
+            daily[d][idx] += cnt
+            days_with_reviews.add(d)
+            total_reviews += cnt
+
+        if not daily:
+            lines.append(f"  {_label('No review data')}")
+            return lines
+
+        # Summary
+        total_days = max(1, PERIOD_DAYS.get(self._period, 30) or len(daily))
+        studied_days = len(days_with_reviews)
+        avg_all = total_reviews / total_days if total_days > 0 else 0
+        avg_studied = total_reviews / studied_days if studied_days > 0 else 0
+
+        lines.append(
+            f"  {_label('Days studied')}  "
+            f"{_val(f'{studied_days}/{total_days}')}  "
+            f"{_label(f'({studied_days * 100 // max(total_days, 1)}%)')}    "
+            f"{_label('Total')} {_val(total_reviews)}"
+        )
+        lines.append(
+            f"  {_label('Avg/day')}  {_val(f'{avg_all:.1f}')}    "
+            f"{_label('Avg (study days)')}  {_val(f'{avg_studied:.1f}')}"
+        )
+
+        # Build bucketed chart
+        colors = [C_NEW, C_YOUNG, C_MATURE, C_RELEARN]
+        buckets = _aggregate_daily_to_buckets(daily, self._period, ref)
+        chart_rows = []
+        for label, val in buckets:
+            if isinstance(val, list):
+                segments = [(v, colors[i]) for i, v in enumerate(val) if v > 0]
+            else:
+                segments = [(val, C_ACCENT)]
+            chart_rows.append((label, segments))
+
+        lines.extend(_hbar_chart(chart_rows))
+
+        # Legend
+        block = "\u2588\u2588"
+        lines.append(
+            f"  [{C_NEW}]{block}[/{C_NEW}] {_label('new')}  "
+            f"[{C_YOUNG}]{block}[/{C_YOUNG}] {_label('young')}  "
+            f"[{C_MATURE}]{block}[/{C_MATURE}] {_label('mature')}  "
+            f"[{C_RELEARN}]{block}[/{C_RELEARN}] {_label('relearn')}"
+        )
+
+        return lines
+
+    # ── Review Time (NEW) ───────────────────────────────────────
+
+    def _review_time_stats(self, col: "Collection", did: str) -> list[str]:
+        lines: list[str] = []
+        ago = self._period_ms()
+        ref = self._ref_epoch()
+
+        where = f" WHERE r.id>0{did}" if ago == 0 else f" WHERE r.id>?{did}"
+        params: tuple = () if ago == 0 else (ago,)
+
+        rows = col.db.all(
+            "SELECT"
+            " CAST((r.id/1000-?)/86400 AS INTEGER) as d,"
+            " SUM(r.time)/1000"
+            " FROM revlog r"
+            " JOIN cards c ON r.cid=c.id"
+            + where
+            + " GROUP BY d"
+            " ORDER BY d",
+            ref,
+            *params,
+        )
+
+        daily: dict[int, int] = {}
+        total_secs = 0
+        for d, secs in rows:
+            s = secs or 0
+            daily[d] = s
+            total_secs += s
+
+        if not daily:
+            lines.append(f"  {_label('No review data')}")
+            return lines
+
+        # Summary
+        studied_days = len(daily)
+        avg_studied = total_secs / studied_days if studied_days > 0 else 0
+
+        lines.append(
+            f"  {_label('Total')}  {_val(_format_time(total_secs))}    "
+            f"{_label('Avg (study days)')}  "
+            f"{_val(_format_time(int(avg_studied)))}"
+        )
+
+        # Build bucketed chart
+        buckets = _aggregate_daily_to_buckets(daily, self._period, ref)
+        chart_rows = []
+        for label, val in buckets:
+            v = val if isinstance(val, int) else sum(val)
+            # Convert seconds to minutes for display
+            chart_rows.append((label, [(v, C_TIME)]))
+
+        lines.extend(_hbar_chart(chart_rows))
+
+        return lines
+
+    # ── Answer Buttons (NEW) ────────────────────────────────────
+
+    def _answer_buttons_stats(self, col: "Collection", did: str) -> list[str]:
+        lines: list[str] = []
+        ago = self._period_ms()
+
+        where = f" WHERE r.id>0{did}" if ago == 0 else f" WHERE r.id>?{did}"
+        params: tuple = () if ago == 0 else (ago,)
+
+        rows = col.db.all(
+            "SELECT"
+            " CASE"
+            "   WHEN r.type IN (0, 3) THEN 'learning'"
+            "   WHEN c.ivl>=21 THEN 'mature'"
+            "   ELSE 'young'"
+            " END as maturity,"
+            " r.ease,"
+            " COUNT(*)"
+            " FROM revlog r"
+            " JOIN cards c ON r.cid=c.id"
+            + where
+            + " GROUP BY maturity, r.ease",
+            *params,
+        )
+
+        # Organize: maturity -> ease -> count
+        data: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+        for maturity, ease, cnt in rows:
+            data[maturity][ease] += cnt
+
+        if not data:
+            lines.append(f"  {_label('No review data')}")
+            return lines
+
+        block = "\u2588"
+        bar_w = 20
+        ease_colors = {1: C_RELEARN, 2: C_HARD, 3: C_GOOD, 4: C_EASY}
+        ease_names = {1: "Again", 2: "Hard", 3: "Good", 4: "Easy"}
+
+        for maturity in ["learning", "young", "mature"]:
+            if maturity not in data:
+                continue
+            eases = data[maturity]
+            total = sum(eases.values())
+            if total == 0:
+                continue
+
+            correct = sum(eases.get(e, 0) for e in [2, 3, 4])
+            correct_pct = correct * 100 / total
+
+            # Label
+            mat_color = {
+                "learning": C_LEARN,
+                "young": C_YOUNG,
+                "mature": C_MATURE,
+            }[maturity]
+            label = f"  [{mat_color}]{maturity.capitalize():>10}[/{mat_color}]  "
+
+            # Inline distribution bar
+            bar = ""
+            for ease in [1, 2, 3, 4]:
+                cnt = eases.get(ease, 0)
+                w = max(1 if cnt > 0 else 0, round(cnt / total * bar_w))
+                color = ease_colors[ease]
+                bar += f"[{color}]{block * w}[/{color}]"
+
+            # Percentage breakdown
+            pcts = ""
+            for ease in [1, 2, 3, 4]:
+                cnt = eases.get(ease, 0)
+                pct = cnt * 100 / total
+                color = ease_colors[ease]
+                pcts += f" {_label(ease_names[ease])} {_val(f'{pct:.0f}%', color)}"
+
+            correct_color = _pct_color(correct_pct)
+            lines.append(
+                f"{label}{bar} {pcts}  "
+                f"{_label('Correct')} {_val(f'{correct_pct:.0f}%', correct_color)}"
+            )
+
+        return lines
+
+    # ── Card Intervals (NEW) ────────────────────────────────────
+
+    def _interval_stats(
+        self,
+        col: "Collection",
+        deck_ids: list[int] | None,
+    ) -> list[str]:
+        lines: list[str] = []
+        dc = ""
+        if deck_ids:
+            dc = f" AND did IN ({','.join(str(d) for d in deck_ids)})"
+
+        rows = col.db.all(
+            f"SELECT ivl, COUNT(*) FROM cards WHERE queue=2{dc} GROUP BY ivl ORDER BY ivl"
+        )
+
+        if not rows:
+            lines.append(f"  {_label('No review cards')}")
+            return lines
+
+        # Bucket intervals
+        bucket_defs = [
+            ("1d", 1, 1),
+            ("2-3d", 2, 3),
+            ("4-7d", 4, 7),
+            ("8-14d", 8, 14),
+            ("15-30d", 15, 30),
+            ("1-2mo", 31, 60),
+            ("2-3mo", 61, 90),
+            ("3-6mo", 91, 180),
+            ("6-12mo", 181, 365),
+            ("1y+", 366, 999999),
+        ]
+
+        bucket_counts: dict[str, int] = {b[0]: 0 for b in bucket_defs}
+        total_ivl = 0
+        total_cards = 0
+        max_ivl = 0
+
+        for ivl, cnt in rows:
+            total_ivl += ivl * cnt
+            total_cards += cnt
+            if ivl > max_ivl:
+                max_ivl = ivl
+            for name, lo, hi in bucket_defs:
+                if lo <= ivl <= hi:
+                    bucket_counts[name] += cnt
+                    break
+
+        avg_ivl = total_ivl / total_cards if total_cards > 0 else 0
+
+        # Summary
+        lines.append(
+            f"  {_label('Average')}  {_val(f'{avg_ivl:.1f} days')}    "
+            f"{_label('Longest')}  {_val(f'{max_ivl} days')}"
+        )
+
+        # Chart
+        chart_rows = []
+        for name, _, _ in bucket_defs:
+            cnt = bucket_counts[name]
+            if cnt > 0:
+                # Color based on interval length (shorter=dim, longer=bright)
+                idx = [b[0] for b in bucket_defs].index(name)
+                color = BAR_GRADIENT[min(idx, len(BAR_GRADIENT) - 1)]
+                chart_rows.append(
+                    (f"[{C_DIM}]{name:>6}[/{C_DIM}]", [(cnt, color)])
+                )
+
+        lines.extend(_hbar_chart(chart_rows))
+
+        return lines
+
+    # ── Hourly Breakdown (NEW) ──────────────────────────────────
+
+    def _hourly_stats(self, col: "Collection", did: str) -> list[str]:
+        lines: list[str] = []
+        ago = self._period_ms()
+
+        where = f" WHERE r.id>0{did}" if ago == 0 else f" WHERE r.id>?{did}"
+        params: tuple = () if ago == 0 else (ago,)
+
+        rows = col.db.all(
+            "SELECT"
+            " CAST(strftime('%H', r.id/1000, 'unixepoch', 'localtime') AS INTEGER) as hour,"
+            " COUNT(*) as total,"
+            " COUNT(CASE WHEN r.ease>=2 THEN 1 END) as correct"
+            " FROM revlog r"
+            " JOIN cards c ON r.cid=c.id"
+            + where
+            + " GROUP BY hour"
+            " ORDER BY hour",
+            *params,
+        )
+
+        if not rows:
+            lines.append(f"  {_label('No review data')}")
+            return lines
+
+        hour_data: dict[int, tuple[int, int]] = {}
+        max_count = 0
+        for hour, total, correct in rows:
+            hour_data[hour] = (total, correct)
+            if total > max_count:
+                max_count = total
+
+        block = "\u2588"
+        bar_w = 30
+
+        for h in range(24):
+            if h not in hour_data:
+                continue
+            total, correct = hour_data[h]
+            pct = correct * 100 / total if total > 0 else 0
+            color = _pct_color(pct)
+
+            w = round(total / max_count * bar_w) if max_count > 0 else 0
+            bar = f"[{color}]{block * w}[/{color}]"
+            padding = " " * (bar_w - w)
+
+            lines.append(
+                f"  [{C_DIM}]{h:2d}:00[/{C_DIM}]  {bar}{padding}"
+                f"  {_val(total, C_BRIGHT)}  {_val(f'{pct:.0f}%', color)}"
+            )
+
+        return lines
+
+    # ── Cards Added (NEW) ───────────────────────────────────────
+
+    def _added_stats(
+        self,
+        col: "Collection",
+        deck_ids: list[int] | None,
+    ) -> list[str]:
+        lines: list[str] = []
+        ago = self._period_ms()
+        ref = self._ref_epoch()
+
+        dc = ""
+        if deck_ids:
+            dc = f" AND did IN ({','.join(str(d) for d in deck_ids)})"
+
+        if ago > 0:
+            rows = col.db.all(
+                "SELECT"
+                " CAST((id/1000-?)/86400 AS INTEGER) as d,"
+                " COUNT(*)"
+                f" FROM cards WHERE id>?{dc}"
+                " GROUP BY d ORDER BY d",
+                ref,
+                ago,
+            )
+        else:
+            rows = col.db.all(
+                "SELECT"
+                " CAST((id/1000-?)/86400 AS INTEGER) as d,"
+                " COUNT(*)"
+                f" FROM cards WHERE 1=1{dc}"
+                " GROUP BY d ORDER BY d",
+                ref,
+            )
+
+        daily: dict[int, int] = {}
+        total_added = 0
+        for d, cnt in rows:
+            daily[d] = cnt
+            total_added += cnt
+
+        if not daily:
+            lines.append(f"  {_label('No cards added')}")
+            return lines
+
+        # Summary
+        total_days = max(1, PERIOD_DAYS.get(self._period, 30) or len(daily))
+        avg = total_added / total_days
+
+        lines.append(
+            f"  {_label('Total')}  {_val(f'{total_added} cards')}    "
+            f"{_label('Avg/day')}  {_val(f'{avg:.1f}')}"
+        )
+
+        # Chart
+        buckets = _aggregate_daily_to_buckets(daily, self._period, ref)
+        chart_rows = []
+        for label, val in buckets:
+            v = val if isinstance(val, int) else sum(val)
+            chart_rows.append((label, [(v, C_ADDED)]))
+
+        lines.extend(_hbar_chart(chart_rows))
+
+        return lines
+
     # ── Actions ──────────────────────────────────────────────────
 
     async def action_toggle_deck(self) -> None:
@@ -998,6 +1660,11 @@ class StatsScreen(Screen[None]):
         self._show_all = not self._show_all
         # Remember the preference for next time
         self.clanki_app.state.stats_show_all = self._show_all
+        self._refresh_stats()
+
+    async def action_cycle_period(self) -> None:
+        self._period = PERIOD_CYCLE[self._period]
+        self.clanki_app.state.stats_period = self._period
         self._refresh_stats()
 
     async def action_back(self) -> None:

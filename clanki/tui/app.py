@@ -63,6 +63,7 @@ class AppState:
     high_contrast: bool = False
     expanded_decks: set[int] = field(default_factory=set)
     stats_show_all: bool = True  # Remember All Decks vs per-deck in stats screen
+    stats_period: str = "1m"  # Remember period preference: "1m", "1y", "all"
 
 
 class ClankiApp(App[None]):
@@ -186,6 +187,11 @@ class ClankiApp(App[None]):
     }
 
     #stats-bottom {
+        height: auto;
+        padding: 0 2;
+    }
+
+    #stats-graphs {
         height: auto;
         padding: 0 2;
     }
