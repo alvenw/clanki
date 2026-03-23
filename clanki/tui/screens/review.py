@@ -29,7 +29,7 @@ from ...config_store import load_config, save_config
 from ...render import render_html_to_text
 from ...review import CardView, DeckNotFoundError, Rating, ReviewSession, UndoError
 from ..widgets.card_view import CardViewWidget
-from ..widgets.stats_bar import DeckCountsBar, StatsBar
+from ..widgets.stats_bar import DeckCountsBar
 
 if TYPE_CHECKING:
     from ..app import ClankiApp
@@ -131,7 +131,6 @@ class ReviewScreen(Screen[None]):
                     id="deck-title",
                     markup=True,
                 ),
-                StatsBar(id="stats-bar"),
                 VerticalScroll(
                     CardViewWidget(
                         id="card-view",
@@ -157,7 +156,10 @@ class ReviewScreen(Screen[None]):
         return bool(self._current_card.question_audio)
 
     def _get_help_text(self) -> str:
-        """Get context-appropriate help text with action prompts."""
+        """Get context-appropriate help text with action prompts.
+
+        Collapses into two rows on narrow terminals so all hotkeys remain visible.
+        """
         state = self.clanki_app.state
         img_status = "on" if state.images_enabled else "off"
         snd_status = "on" if state.audio_enabled else "off"
@@ -172,14 +174,25 @@ class ReviewScreen(Screen[None]):
         if self._session is not None and self._session.can_undo:
             undo_hint = "[dim]u[/dim] undo  "
 
+        # Determine available width for single vs two-row layout
+        try:
+            width = self.size.width
+        except Exception:
+            width = 120
+        if width < 1:
+            width = 120
+
         if not self._answer_revealed:
             # Question side: Show Answer prompt
-            return (
-                "[bold reverse] Show Answer [/bold reverse] [dim](Space/Enter)[/dim]  "
+            primary = "[bold reverse] Show Answer [/bold reverse] [dim](Space/Enter)[/dim]"
+            secondary = (
                 f"{undo_hint}{replay_hint}"
                 f"[dim]s[/dim] snd:{snd_status}  [dim]i[/dim] img:{img_status}  "
                 "[dim]Esc[/dim] back"
             )
+            sep = "  " if width >= 80 else "\n"
+            return f"{primary}{sep}{secondary}"
+
         # Answer side: Rating bar with timestamps
         labels = (
             self._current_card.rating_labels
@@ -193,23 +206,36 @@ class ReviewScreen(Screen[None]):
 
         if labels:
             again, hard, good, easy = labels
-            return (
+            ratings = (
                 f"[bold red]1[/bold red] Again [dim]{again}[/dim]  "
                 f"[bold yellow]2[/bold yellow] Hard [dim]{hard}[/dim]  "
                 f"[bold green]3[/bold green] Good [dim]{good}[/dim]  "
-                f"[bold blue]4[/bold blue] Easy [dim]{easy}[/dim]  "
-                f"{extra_hints}"
+                f"[bold blue]4[/bold blue] Easy [dim]{easy}[/dim]"
             )
-        return (
-            "[bold red]1[/bold red] Again  "
-            "[bold yellow]2[/bold yellow] Hard  "
-            "[bold green]3[/bold green] Good  "
-            "[bold blue]4[/bold blue] Easy  "
-            f"{extra_hints}"
-        )
+        else:
+            ratings = (
+                "[bold red]1[/bold red] Again  "
+                "[bold yellow]2[/bold yellow] Hard  "
+                "[bold green]3[/bold green] Good  "
+                "[bold blue]4[/bold blue] Easy"
+            )
+
+        sep = "  " if width >= 90 else "\n"
+        return f"{ratings}{sep}{extra_hints}"
+
+    def on_resize(self) -> None:
+        """Update help bar layout when terminal is resized."""
+        try:
+            help_bar = self.query_one("#help-bar", Static)
+            help_bar.update(self._get_help_text())
+        except Exception:
+            pass
 
     async def on_mount(self) -> None:
         """Initialize review session and load first card."""
+        # Set terminal window/tab title to deck name
+        self._set_terminal_title(self._deck_name)
+
         col = self.clanki_app.state.col
         if col is None:
             self.notify("Collection not open", severity="error")
@@ -226,9 +252,21 @@ class ReviewScreen(Screen[None]):
         self._update_stats()
         await self._load_next_card()
 
+    @staticmethod
+    def _set_terminal_title(title: str) -> None:
+        """Set the terminal window/tab title via ANSI escape sequence."""
+        import sys
+
+        try:
+            sys.__stdout__.write(f"\033]0;{title}\007")
+            sys.__stdout__.flush()
+        except Exception:
+            pass
+
     def on_unmount(self) -> None:
-        """Stop audio when leaving the screen."""
+        """Stop audio and restore title when leaving the screen."""
         stop_audio()
+        self._set_terminal_title("Clanki")
 
     def _update_stats(self) -> None:
         """Update all stats displays with current counts."""
@@ -236,16 +274,6 @@ class ReviewScreen(Screen[None]):
             return
 
         counts = self._session.get_counts()
-
-        # Update top stats bar (session summary: due/reviewed)
-        stats_bar = self.query_one("#stats-bar", StatsBar)
-        stats_bar.update_counts(
-            new=counts.new_count,
-            learn=counts.learn_count,
-            review=counts.review_count,
-        )
-        session_stats = self.clanki_app.state.stats
-        stats_bar.update_session(reviewed=session_stats.reviewed)
 
         # Update bottom deck counts bar (new/learn/review)
         deck_counts_bar = self.query_one("#deck-counts-bar", DeckCountsBar)

@@ -121,12 +121,6 @@ class ClankiApp(App[None]):
         height: auto;
     }
 
-    .stats-bar {
-        height: 3;
-        background: $surface-darken-1;
-        padding: 0 1;
-    }
-
     .rating-bar {
         height: 3;
         background: $surface-darken-2;
@@ -151,7 +145,7 @@ class ClankiApp(App[None]):
     }
 
     .help-text {
-        height: 1;
+        height: auto;
         background: $surface-darken-1;
         text-align: center;
     }
