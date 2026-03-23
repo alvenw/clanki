@@ -97,6 +97,11 @@ class ClankiApp(App[None]):
 
     #deck-filter {
         margin-bottom: 1;
+        display: none;
+    }
+
+    #deck-filter.visible {
+        display: block;
     }
 
     #deck-list {

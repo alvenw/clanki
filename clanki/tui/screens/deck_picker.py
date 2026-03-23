@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical
+from textual.events import Key
 from textual.message import Message
 from textual.screen import Screen
 from textual.widgets import Input, ListItem, ListView, Static
@@ -208,8 +209,9 @@ class DeckPickerScreen(Screen[str]):
         header = self.query_one(".header-bar", Static)
         filter_input = self.query_one("#deck-filter", Input)
 
-        # Available space inside the column after header and filter input
-        available = column.size.height - header.outer_size.height - filter_input.outer_size.height
+        # Available space inside the column after header (and filter input if visible)
+        filter_height = filter_input.outer_size.height if filter_input.has_class("visible") else 0
+        available = column.size.height - header.outer_size.height - filter_height
 
         # List border adds 2 rows (top + bottom)
         border_height = 2 if list_view.styles.border else 0
@@ -370,6 +372,20 @@ class DeckPickerScreen(Screen[str]):
         else:
             list_view.action_cursor_up()
 
+    async def on_key(self, event: Key) -> None:
+        """Intercept arrow keys while filter is focused to navigate the deck list."""
+        filter_input = self.query_one("#deck-filter", Input)
+        if not filter_input.has_focus:
+            return
+        if event.key == "down":
+            event.prevent_default()
+            event.stop()
+            await self.action_cursor_down()
+        elif event.key == "up":
+            event.prevent_default()
+            event.stop()
+            await self.action_cursor_up()
+
     def on_input_changed(self, event: Input.Changed) -> None:
         """Handle filter input changes."""
         if event.input.id == "deck-filter":
@@ -377,32 +393,32 @@ class DeckPickerScreen(Screen[str]):
             self._update_list()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        """When Enter is pressed in the filter, focus the deck list."""
+        """When Enter is pressed in the filter, select the highlighted deck."""
         if event.input.id == "deck-filter":
             list_view = self.query_one("#deck-list", ListView)
-            list_view.focus()
-            if self._visible_nodes:
-                list_view.index = 0
+            if list_view.highlighted_child is not None:
+                if isinstance(list_view.highlighted_child, DeckListItem):
+                    self.run_worker(self._select_deck(list_view.highlighted_child.node))
 
     async def action_focus_filter(self) -> None:
-        """Focus the filter input."""
-        self.query_one("#deck-filter", Input).focus()
+        """Show and focus the filter input."""
+        filter_input = self.query_one("#deck-filter", Input)
+        filter_input.add_class("visible")
+        filter_input.focus()
+        self.call_after_refresh(self._update_list_height)
 
     async def action_handle_escape(self) -> None:
-        """Handle escape: clear filter if active, otherwise quit."""
+        """Handle escape: hide filter if visible, otherwise quit."""
         filter_input = self.query_one("#deck-filter", Input)
-        if filter_input.has_focus:
-            # Escape from filter: clear and refocus list
+        if filter_input.has_class("visible"):
+            # Clear and hide filter, refocus list
             filter_input.value = ""
             self._filter_text = ""
+            filter_input.remove_class("visible")
             self._update_list()
             list_view = self.query_one("#deck-list", ListView)
             list_view.focus()
-        elif self._filter_text:
-            # Clear active filter
-            filter_input.value = ""
-            self._filter_text = ""
-            self._update_list()
+            self.call_after_refresh(self._update_list_height)
         else:
             self.app.exit()
 
