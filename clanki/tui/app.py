@@ -112,7 +112,6 @@ class ClankiApp(App[None]):
     .card-container {
         height: 1fr;
         min-height: 0;
-        margin-top: 1;
     }
 
     .card-content {
@@ -128,12 +127,6 @@ class ClankiApp(App[None]):
     .answer-panel {
         border: solid $success;
         height: auto;
-    }
-
-    .stats-bar {
-        height: 3;
-        background: $surface-darken-1;
-        padding: 0 1;
     }
 
     .rating-bar {
@@ -160,7 +153,7 @@ class ClankiApp(App[None]):
     }
 
     .help-text {
-        height: 1;
+        height: auto;
         background: $surface-darken-1;
         text-align: center;
     }
