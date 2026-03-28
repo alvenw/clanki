@@ -13,9 +13,10 @@ from typing import TYPE_CHECKING, Any
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical
+from textual.events import Key
 from textual.message import Message
 from textual.screen import Screen
-from textual.widgets import ListItem, ListView, Static
+from textual.widgets import Input, ListItem, ListView, Static
 
 from ... import __version__
 
@@ -117,7 +118,7 @@ class DeckPickerScreen(Screen[str]):
     """Screen for selecting a deck to review."""
 
     BINDINGS = [
-        Binding("escape", "app.quit", "Quit"),
+        Binding("escape", "handle_escape", "Quit/Clear filter"),
         Binding("j", "cursor_down", "Down", show=False),
         Binding("k", "cursor_up", "Up", show=False),
         Binding("enter", "select_deck", "Select"),
@@ -125,6 +126,7 @@ class DeckPickerScreen(Screen[str]):
         Binding("c", "open_config", "Config", show=False),
         Binding("t", "open_stats", "Stats", show=False),
         Binding("s", "sync", "Sync", show=False),
+        Binding("/", "focus_filter", "Filter", show=False),
     ]
 
     class DeckSelected(Message):
@@ -138,6 +140,7 @@ class DeckPickerScreen(Screen[str]):
         super().__init__()
         self._deck_tree: list[DeckNode] = []
         self._visible_nodes: list[DeckNode] = []
+        self._filter_text: str = ""
 
     @property
     def clanki_app(self) -> "ClankiApp":
@@ -151,7 +154,7 @@ class DeckPickerScreen(Screen[str]):
         # Footer - full width, docked to bottom
         yield Static(
             "[dim]j/k[/dim] navigate  [dim]Space[/dim] expand/collapse  "
-            "[dim]Enter[/dim] select  [dim]c[/dim] config  "
+            "[dim]Enter[/dim] select  [dim]/[/dim] filter  [dim]c[/dim] config  "
             "[dim]t[/dim] stats  [dim]s[/dim] sync  [dim]q[/dim] quit",
             classes="help-text footer-bar",
             markup=True,
@@ -160,6 +163,7 @@ class DeckPickerScreen(Screen[str]):
         yield Container(
             Vertical(
                 Static(f"clanki v{__version__}", classes="header-bar"),
+                Input(placeholder="Filter decks...", id="deck-filter"),
                 ListView(id="deck-list"),
                 classes="content-column",
             ),
@@ -203,9 +207,11 @@ class DeckPickerScreen(Screen[str]):
         list_view = self.query_one("#deck-list", ListView)
         column = self.query_one(".content-column", Vertical)
         header = self.query_one(".header-bar", Static)
+        filter_input = self.query_one("#deck-filter", Input)
 
-        # Available space inside the column after header
-        available = column.size.height - header.outer_size.height
+        # Available space inside the column after header (and filter input if visible)
+        filter_height = filter_input.outer_size.height if filter_input.has_class("visible") else 0
+        available = column.size.height - header.outer_size.height - filter_height
 
         # List border adds 2 rows (top + bottom)
         border_height = 2 if list_view.styles.border else 0
@@ -255,17 +261,56 @@ class DeckPickerScreen(Screen[str]):
         # If root has a name, it's a real node
         return [self._build_node(root, 0)]
 
+    def _filter_tree(self, nodes: list[DeckNode], query: str) -> list[DeckNode]:
+        """Filter the deck tree, keeping nodes that match and their ancestors.
+
+        Matching is case-insensitive against the full deck name (parent::child).
+        If a child matches, all ancestor nodes are included to show the path.
+        """
+        q = query.lower()
+
+        def filter_nodes(node_list: list[DeckNode]) -> list[DeckNode]:
+            result: list[DeckNode] = []
+            for node in node_list:
+                # Check if this node's full name matches
+                name_matches = q in node.name.lower()
+                # Recursively filter children
+                filtered_children = filter_nodes(node.children)
+
+                if name_matches or filtered_children:
+                    # Create a copy with only the filtered children
+                    filtered_node = DeckNode(
+                        deck_id=node.deck_id,
+                        name=node.name,
+                        new_count=node.new_count,
+                        learn_count=node.learn_count,
+                        review_count=node.review_count,
+                        depth=node.depth,
+                        children=filtered_children if not name_matches else node.children,
+                    )
+                    result.append(filtered_node)
+            return result
+
+        return filter_nodes(nodes)
+
     def _get_visible_nodes(self, nodes: list[DeckNode]) -> list[DeckNode]:
-        """Get the list of visible nodes based on expanded state."""
+        """Get the list of visible nodes based on expanded state and filter."""
+        # Apply filter first if active
+        if self._filter_text:
+            filtered = self._filter_tree(nodes, self._filter_text)
+        else:
+            filtered = nodes
+
         result: list[DeckNode] = []
 
         def walk(node_list: list[DeckNode]) -> None:
             for node in node_list:
                 result.append(node)
-                if node.deck_id in self._expanded_decks:
+                # When filtering, always expand to show matches; otherwise use expand state
+                if self._filter_text or node.deck_id in self._expanded_decks:
                     walk(node.children)
 
-        walk(nodes)
+        walk(filtered)
         return result
 
     def _update_list(self, restore_deck_id: int | None = None) -> None:
@@ -326,6 +371,56 @@ class DeckPickerScreen(Screen[str]):
             list_view.index = len(self._visible_nodes) - 1
         else:
             list_view.action_cursor_up()
+
+    async def on_key(self, event: Key) -> None:
+        """Intercept arrow keys while filter is focused to navigate the deck list."""
+        filter_input = self.query_one("#deck-filter", Input)
+        if not filter_input.has_focus:
+            return
+        if event.key == "down":
+            event.prevent_default()
+            event.stop()
+            await self.action_cursor_down()
+        elif event.key == "up":
+            event.prevent_default()
+            event.stop()
+            await self.action_cursor_up()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle filter input changes."""
+        if event.input.id == "deck-filter":
+            self._filter_text = event.value
+            self._update_list()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """When Enter is pressed in the filter, select the highlighted deck."""
+        if event.input.id == "deck-filter":
+            list_view = self.query_one("#deck-list", ListView)
+            if list_view.highlighted_child is not None:
+                if isinstance(list_view.highlighted_child, DeckListItem):
+                    self.run_worker(self._select_deck(list_view.highlighted_child.node))
+
+    async def action_focus_filter(self) -> None:
+        """Show and focus the filter input."""
+        filter_input = self.query_one("#deck-filter", Input)
+        filter_input.add_class("visible")
+        filter_input.focus()
+        self.call_after_refresh(self._update_list_height)
+
+    async def action_handle_escape(self) -> None:
+        """Handle escape: hide filter if visible, otherwise quit."""
+        filter_input = self.query_one("#deck-filter", Input)
+        if filter_input.has_class("visible"):
+            # Clear and hide filter, refocus list
+            filter_input.value = ""
+            self._filter_text = ""
+            filter_input.remove_class("visible")
+            self._update_list()
+            list_view = self.query_one("#deck-list", ListView)
+            list_view.focus()
+            self.call_after_refresh(self._update_list_height)
+        else:
+            self.app.exit()
 
     async def action_select_deck(self) -> None:
         """Select the currently highlighted deck."""
