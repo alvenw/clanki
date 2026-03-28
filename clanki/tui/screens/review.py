@@ -126,11 +126,6 @@ class ReviewScreen(Screen[None]):
         # Main content - centered with max-width
         yield Container(
             Vertical(
-                Static(
-                    f"[bold]{self._deck_name}[/bold]",
-                    id="deck-title",
-                    markup=True,
-                ),
                 VerticalScroll(
                     CardViewWidget(
                         id="card-view",
@@ -224,10 +219,15 @@ class ReviewScreen(Screen[None]):
         return f"{ratings}{sep}{extra_hints}"
 
     def on_resize(self) -> None:
-        """Update help bar layout when terminal is resized."""
+        """Update help bar layout and card compact mode when terminal is resized."""
         try:
             help_bar = self.query_one("#help-bar", Static)
             help_bar.update(self._get_help_text())
+        except Exception:
+            pass
+        try:
+            card_view = self.query_one("#card-view", CardViewWidget)
+            card_view._update_compact_mode()
         except Exception:
             pass
 
@@ -305,14 +305,12 @@ class ReviewScreen(Screen[None]):
         self._display_card()
 
     def _update_title_with_flag(self) -> None:
-        """Update the deck title Static to include a flag indicator if flagged."""
-        title = f"[bold]{self._deck_name}[/bold]"
+        """Update the terminal title to include a flag indicator if flagged."""
+        title = self._deck_name
         if self._current_flag > 0:
-            color = self.FLAG_COLORS.get(self._current_flag, "#ffffff")
             name = self.FLAG_NAMES.get(self._current_flag, "")
-            title += f"  [{color}]\u2691 {name}[/{color}]"
-        deck_title = self.query_one("#deck-title", Static)
-        deck_title.update(title)
+            title += f" \u2691 {name}"
+        self._set_terminal_title(title)
 
     def _display_card(self, play_audio: bool = True) -> None:
         """Display the current card content.

@@ -112,7 +112,6 @@ class ClankiApp(App[None]):
     .card-container {
         height: 1fr;
         min-height: 0;
-        margin-top: 1;
     }
 
     .card-content {

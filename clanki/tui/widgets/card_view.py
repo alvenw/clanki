@@ -42,6 +42,11 @@ class CardViewWidget(Vertical):
         height: auto;
     }
 
+    CardViewWidget.compact .card-section {
+        border: none;
+        padding: 0 1;
+    }
+
     CardViewWidget .content {
         height: auto;
     }
@@ -227,9 +232,18 @@ class CardViewWidget(Vertical):
             logger.warning("Styled rendering failed, using plain text: %s", exc)
             return [Static(html, classes="content")]
 
+    def _update_compact_mode(self) -> None:
+        """Toggle compact mode based on terminal width."""
+        try:
+            terminal_width = self.screen.size.width
+        except Exception:
+            terminal_width = 0
+        self.set_class(terminal_width <= 96, "compact")
+
     def _refresh_content(self) -> None:
         """Refresh the widget content."""
         try:
+            self._update_compact_mode()
             self.remove_children()  # Remove from self, not #card-content
 
             if self._answer_html is not None:
@@ -260,8 +274,12 @@ class CardViewWidget(Vertical):
 
         Uses a threshold of 4 columns to avoid feedback loops where
         small layout adjustments from image rendering trigger more resizes.
+        Toggles compact mode (no border/padding) on small viewports.
         """
         current_width = event.size.width
+
+        self._update_compact_mode()
+
         if abs(current_width - self._last_width) >= 4:
             self._last_width = current_width
             if self._images_enabled and (self._question_html or self._answer_html):
