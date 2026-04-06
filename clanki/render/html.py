@@ -205,6 +205,7 @@ class TextStyle:
     color: str | None = None
     bgcolor: str | None = None
     is_cloze: bool = False  # Special flag for cloze answer highlighting
+    link: str | None = None  # URL from <a href="..."> tags
 
     def copy(self) -> "TextStyle":
         """Create a copy of this style."""
@@ -216,6 +217,7 @@ class TextStyle:
             color=self.color,
             bgcolor=self.bgcolor,
             is_cloze=self.is_cloze,
+            link=self.link,
         )
 
     def is_default(self) -> bool:
@@ -228,6 +230,7 @@ class TextStyle:
             and self.color is None
             and self.bgcolor is None
             and not self.is_cloze
+            and self.link is None
         )
 
 
@@ -569,6 +572,28 @@ class _HTMLToTextRenderer(HTMLParser):
             self._push_style(strikethrough=True)
             return
 
+        # Mark (highlight) handling
+        if tag == "mark":
+            style_changes = self._apply_inline_styles(attrs)
+            if "bgcolor" not in style_changes:
+                style_changes["bgcolor"] = "yellow"
+            self._push_style(**style_changes)
+            return
+
+        # Anchor (link) handling
+        if tag == "a":
+            attrs_dict = dict(attrs)
+            href = attrs_dict.get("href")
+            style_changes = self._apply_inline_styles(attrs)
+            if href:
+                style_changes["link"] = href
+                if "underline" not in style_changes:
+                    style_changes["underline"] = True
+                if "color" not in style_changes:
+                    style_changes["color"] = "#5599ff"
+            self._push_style(**style_changes)
+            return
+
         # Span with inline styles
         if tag == "span":
             style_changes = self._apply_inline_styles(attrs)
@@ -699,6 +724,14 @@ class _HTMLToTextRenderer(HTMLParser):
             return
 
         if tag in self.STRIKETHROUGH_TAGS:
+            self._pop_style()
+            return
+
+        if tag == "mark":
+            self._pop_style()
+            return
+
+        if tag == "a":
             self._pop_style()
             return
 

@@ -112,12 +112,16 @@ class ClankiApp(App[None]):
     .card-container {
         height: 1fr;
         min-height: 0;
-        margin-top: 1;
     }
 
     .card-content {
         padding: 0 2 1 2;
         height: auto;
+    }
+
+    .content {
+        link-color: #5599ff;
+        link-style: underline;
     }
 
     .question-panel {
@@ -128,12 +132,6 @@ class ClankiApp(App[None]):
     .answer-panel {
         border: solid $success;
         height: auto;
-    }
-
-    .stats-bar {
-        height: 3;
-        background: $surface-darken-1;
-        padding: 0 1;
     }
 
     .rating-bar {
@@ -160,7 +158,7 @@ class ClankiApp(App[None]):
     }
 
     .help-text {
-        height: 1;
+        height: auto;
         background: $surface-darken-1;
         text-align: center;
     }
@@ -271,6 +269,10 @@ class ClankiApp(App[None]):
             from .screens.deck_picker import DeckPickerScreen
 
             await self.push_screen(DeckPickerScreen())
+
+    def action_open_url(self, url: str) -> None:
+        """Open a URL in the default browser."""
+        self.open_url(url)
 
     async def action_quit(self) -> None:
         """Quit the application."""

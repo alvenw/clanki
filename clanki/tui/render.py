@@ -464,6 +464,10 @@ def _segment_to_rich_style(
             else:
                 style_kwargs["bgcolor"] = parsed
 
+    if segment.style.link:
+        escaped = segment.style.link.replace("\\", "\\\\").replace("'", "\\'")
+        style_kwargs["meta"] = {"@click": f"app.open_url('{escaped}')"}
+
     # Special cloze styling: bold + reverse for visibility
     if segment.style.is_cloze:
         style_kwargs["bold"] = True
