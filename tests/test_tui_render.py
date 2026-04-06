@@ -277,6 +277,23 @@ class TestSegmentToRichStyle:
         assert style.bold is True
         assert style.reverse is True
 
+    def test_link_style(self):
+        """Link style should set @click meta for Textual action."""
+        segment = StyledSegment(
+            text="test",
+            style=TextStyle(link="https://example.com", underline=True, color="#5599ff"),
+        )
+        style = _segment_to_rich_style(segment)
+        assert "@click" in style.meta
+        assert "https://example.com" in style.meta["@click"]
+        assert style.underline is True
+
+    def test_bgcolor_style(self):
+        """Background color style should set bgcolor for highlights."""
+        segment = StyledSegment(text="test", style=TextStyle(bgcolor="yellow"))
+        style = _segment_to_rich_style(segment)
+        assert style.bgcolor is not None
+
 
 class TestSegmentsToRichText:
     """Tests for segments_to_rich_text function."""

@@ -419,6 +419,100 @@ class TestStyledSegments:
         assert "clozenext" not in text
 
 
+class TestMarkHighlight:
+    """Tests for <mark> tag (highlight) rendering."""
+
+    def test_mark_tag_creates_bgcolor_segment(self):
+        """Mark tags should create segments with yellow bgcolor."""
+        html = "<mark>highlighted</mark>"
+        segments = render_html_to_styled_segments(html)
+        mark_segments = [s for s in segments if s.style.bgcolor == "yellow"]
+        assert len(mark_segments) >= 1
+        assert any("highlighted" in s.text for s in mark_segments)
+
+    def test_mark_tag_with_custom_background(self):
+        """Mark with inline background-color should override default yellow."""
+        html = '<mark style="background-color: pink;">text</mark>'
+        segments = render_html_to_styled_segments(html)
+        mark_segments = [s for s in segments if s.style.bgcolor == "pink"]
+        assert len(mark_segments) >= 1
+
+    def test_mark_tag_nested_in_bold(self):
+        """Mark inside bold should produce bold + bgcolor segment."""
+        html = "<b><mark>text</mark></b>"
+        segments = render_html_to_styled_segments(html)
+        both = [s for s in segments if s.style.bold and s.style.bgcolor == "yellow"]
+        assert len(both) >= 1
+
+    def test_mark_tag_with_nested_bold(self):
+        """Bold inside mark should produce bold + bgcolor segment."""
+        html = "<mark><b>text</b></mark>"
+        segments = render_html_to_styled_segments(html)
+        both = [s for s in segments if s.style.bold and s.style.bgcolor == "yellow"]
+        assert len(both) >= 1
+
+    def test_mark_tag_plain_text_output(self):
+        """Mark text should be preserved in unstyled output."""
+        result = render_html_to_text("<mark>visible</mark>")
+        assert "visible" in result
+
+
+class TestAnchorLink:
+    """Tests for <a> tag (link) rendering."""
+
+    def test_anchor_tag_creates_link_segment(self):
+        """Anchor with href should create segment with link URL."""
+        html = '<a href="https://example.com">click</a>'
+        segments = render_html_to_styled_segments(html)
+        link_segments = [s for s in segments if s.style.link == "https://example.com"]
+        assert len(link_segments) >= 1
+        assert any("click" in s.text for s in link_segments)
+
+    def test_anchor_tag_has_underline_and_color(self):
+        """Anchor with href should have underline and blue color by default."""
+        html = '<a href="https://example.com">link</a>'
+        segments = render_html_to_styled_segments(html)
+        link_segments = [s for s in segments if s.style.link]
+        assert len(link_segments) >= 1
+        seg = link_segments[0]
+        assert seg.style.underline is True
+        assert seg.style.color == "#5599ff"
+
+    def test_anchor_tag_without_href(self):
+        """Anchor without href should not get link styling."""
+        html = "<a>text</a>"
+        segments = render_html_to_styled_segments(html)
+        link_segments = [s for s in segments if s.style.link]
+        assert len(link_segments) == 0
+
+    def test_anchor_tag_with_inline_color_override(self):
+        """Anchor with inline color should override default blue."""
+        html = '<a href="url" style="color: red;">text</a>'
+        segments = render_html_to_styled_segments(html)
+        link_segments = [s for s in segments if s.style.link]
+        assert len(link_segments) >= 1
+        assert link_segments[0].style.color == "red"
+
+    def test_anchor_tag_nested_bold(self):
+        """Bold inside anchor should inherit link styling."""
+        html = '<a href="url"><b>bold link</b></a>'
+        segments = render_html_to_styled_segments(html)
+        both = [s for s in segments if s.style.bold and s.style.link == "url"]
+        assert len(both) >= 1
+
+    def test_anchor_tag_plain_text_output(self):
+        """Link text should be preserved in unstyled output."""
+        result = render_html_to_text('<a href="url">link text</a>')
+        assert "link text" in result
+
+    def test_mark_inside_anchor(self):
+        """Mark inside anchor should have both bgcolor and link."""
+        html = '<a href="url"><mark>text</mark></a>'
+        segments = render_html_to_styled_segments(html)
+        both = [s for s in segments if s.style.bgcolor == "yellow" and s.style.link == "url"]
+        assert len(both) >= 1
+
+
 class TestRawCloze:
     """Tests for raw cloze syntax {{cN::answer::hint}} handling."""
 

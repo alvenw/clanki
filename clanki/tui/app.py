@@ -119,6 +119,11 @@ class ClankiApp(App[None]):
         height: auto;
     }
 
+    .content {
+        link-color: #5599ff;
+        link-style: underline;
+    }
+
     .question-panel {
         border: solid $primary;
         height: auto;
@@ -264,6 +269,10 @@ class ClankiApp(App[None]):
             from .screens.deck_picker import DeckPickerScreen
 
             await self.push_screen(DeckPickerScreen())
+
+    def action_open_url(self, url: str) -> None:
+        """Open a URL in the default browser."""
+        self.open_url(url)
 
     async def action_quit(self) -> None:
         """Quit the application."""
